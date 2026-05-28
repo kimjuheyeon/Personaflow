@@ -1,0 +1,5 @@
+{
+  "buildCommand": "cd persona-flow && npm install && npm run build",
+  "outputDirectory": "persona-flow/dist",
+  "installCommand": "cd persona-flow && npm install"
+}
