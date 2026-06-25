@@ -1,13 +1,22 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Send, Download, FileJson, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
-import type { TestReport, Finding, PersonaConfig, SeverityLevel } from '@/types'
+import { chatWithPersona } from '@/lib/ai/gemini'
+import type {
+  TestReport,
+  Finding,
+  SeverityLevel,
+  WalkEmotion,
+} from '@/types'
 
 interface ReportPageProps {
   report: TestReport
   onNewTest: () => void
+  apiKey: string
+  model: string
+  onRequireKey: () => void
 }
 
 /* ── 유틸 ── */
@@ -43,21 +52,11 @@ const DIGITAL_LABEL: Record<string, string> = {
   expert: '고급',
 }
 
-const generateMockResponse = (question: string, persona: PersonaConfig): string => {
-  if (question.includes('버튼') || question.includes('레이블')) {
-    return `"${persona.name}" 관점에서는 현재 버튼 텍스트가 다소 모호하게 느껴집니다. ${persona.role}로서 더 직접적인 행동 지향 문구가 도움이 될 것 같아요.`
-  }
-  if (question.includes('클릭') || question.includes('먼저')) {
-    return `제가 ${persona.role}이고 ${persona.context}이라면, 가장 먼저 화면 상단의 주요 CTA를 클릭할 것 같습니다. 하지만 현재 버튼 배치가 시선 흐름과 맞지 않아 잠깐 멈추게 되더라고요.`
-  }
-  if (question.includes('용어') || question.includes('이해')) {
-    return persona.digitalLevel === 'beginner'
-      ? '솔직히 처음 보는 용어들이 많아서 당황스러웠어요. 좀 더 쉬운 말로 풀어주시면 좋겠습니다.'
-      : '대부분의 용어는 익숙한데, 일부 전문 용어는 툴팁이 있으면 더 좋을 것 같습니다.'
-  }
-  return persona.context === '처음 써보는 유저'
-    ? `${persona.name}(${persona.role}) 관점에서 이 화면을 살펴보면, 전반적으로 진입 장벽이 느껴집니다. 안내 메시지가 좀 더 명확하면 좋겠어요.`
-    : `${persona.name}(${persona.role}) 관점에서 이 화면을 살펴보면, 기존 도구와 비교했을 때 인터페이스가 낯설지 않아서 적응하기 쉬울 것 같습니다.`
+const EMOTION_META: Record<WalkEmotion, { label: string; cls: string; emoji: string }> = {
+  positive: { label: '만족', cls: 'bg-green-50 border-green-200 text-green-700', emoji: '😊' },
+  neutral: { label: '보통', cls: 'bg-gray-50 border-gray-200 text-gray-600', emoji: '😐' },
+  confused: { label: '혼란', cls: 'bg-amber-50 border-amber-200 text-amber-700', emoji: '😕' },
+  frustrated: { label: '불만', cls: 'bg-red-50 border-red-200 text-red-700', emoji: '😣' },
 }
 
 /* ── 탭1 요약 ── */
@@ -296,7 +295,17 @@ const QUICK_QUESTIONS = [
   '비전공자가 이 용어 이해할 수 있을까?',
 ]
 
-function InlineChatTab({ report }: { report: TestReport }) {
+function InlineChatTab({
+  report,
+  apiKey,
+  model,
+  onRequireKey,
+}: {
+  report: TestReport
+  apiKey: string
+  model: string
+  onRequireKey: () => void
+}) {
   const frames =
     report.frames.length > 0
       ? report.frames
@@ -311,13 +320,24 @@ function InlineChatTab({ report }: { report: TestReport }) {
   const [chatMap, setChatMap] = useState<Record<string, ChatMessage[]>>({})
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const chatMapRef = useRef(chatMap)
+  chatMapRef.current = chatMap
 
   const chatKey = `${selectedFrameId}::${selectedPersonaId}`
   const messages: ChatMessage[] = chatMap[chatKey] ?? []
   const currentPersona = report.personas.find((p) => p.id === selectedPersonaId) ?? report.personas[0]
 
-  const sendMessage = (text: string) => {
+  const sendMessage = async (text: string) => {
     if (!text.trim() || isTyping) return
+    if (!apiKey) {
+      onRequireKey()
+      return
+    }
+    if (!currentPersona) return
+
+    setError(null)
+    const history = chatMapRef.current[chatKey] ?? []
 
     const userMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
@@ -333,8 +353,17 @@ function InlineChatTab({ report }: { report: TestReport }) {
     setInput('')
     setIsTyping(true)
 
-    setTimeout(() => {
-      const response = generateMockResponse(text, currentPersona)
+    const frame = report.frames.find((f) => f.id === selectedFrameId) ?? null
+
+    try {
+      const response = await chatWithPersona(
+        apiKey,
+        model,
+        frame,
+        currentPersona,
+        history,
+        text.trim()
+      )
       const personaMsg: ChatMessage = {
         id: `msg-${Date.now() + 1}`,
         role: 'persona',
@@ -345,8 +374,11 @@ function InlineChatTab({ report }: { report: TestReport }) {
         ...prev,
         [chatKey]: [...(prev[chatKey] ?? []), personaMsg],
       }))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '응답 생성에 실패했습니다.')
+    } finally {
       setIsTyping(false)
-    }, 1000)
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -453,6 +485,15 @@ function InlineChatTab({ report }: { report: TestReport }) {
           )}
         </div>
 
+        {/* 에러 */}
+        {error && (
+          <div className="px-4 pt-2">
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 leading-relaxed">
+              {error}
+            </p>
+          </div>
+        )}
+
         {/* 빠른 질문 */}
         <div className="flex gap-1.5 flex-wrap px-4 pb-2 pt-2 border-t border-gray-100">
           {QUICK_QUESTIONS.map((q) => (
@@ -491,14 +532,137 @@ function InlineChatTab({ report }: { report: TestReport }) {
   )
 }
 
+/* ── 탭4 AI 클릭 시뮬레이션 ── */
+function WalkthroughTab({ report }: { report: TestReport }) {
+  const steps = report.walkthrough ?? []
+  const frameName = (id: string) =>
+    report.frames.find((f) => f.id === id)?.name ?? id
+
+  if (steps.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-400">
+        <p className="text-sm">시뮬레이션 데이터가 없습니다.</p>
+      </div>
+    )
+  }
+
+  // 페르소나별 그룹화
+  const byPersona = new Map<string, typeof steps>()
+  for (const s of steps) {
+    const arr = byPersona.get(s.personaName) ?? []
+    arr.push(s)
+    byPersona.set(s.personaName, arr)
+  }
+
+  return (
+    <div className="space-y-5">
+      <p className="text-xs text-gray-500">
+        각 페르소나가 시안을 직접 사용하며 클릭·탐색한 과정을 AI가 시뮬레이션한 결과입니다.
+      </p>
+      {Array.from(byPersona.entries()).map(([personaName, personaSteps]) => {
+        const persona = report.personas.find((p) => p.name === personaName)
+        return (
+          <div
+            key={personaName}
+            className="border border-gray-200 rounded-md bg-white overflow-hidden"
+          >
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50">
+              <span className="text-lg">{persona?.avatar ?? '👤'}</span>
+              <div>
+                <p className="text-xs font-semibold text-gray-800">{personaName}</p>
+                {persona && <p className="text-xs text-gray-400">{persona.role}</p>}
+              </div>
+            </div>
+            <div className="p-4">
+              <ol className="space-y-3">
+                {personaSteps.map((step, i) => {
+                  const emo = EMOTION_META[step.emotion]
+                  return (
+                    <li key={i} className="flex gap-3">
+                      {/* 순번 + 라인 */}
+                      <div className="flex flex-col items-center flex-shrink-0">
+                        <span className="w-6 h-6 rounded-full bg-slate-900 text-white text-xs flex items-center justify-center font-semibold">
+                          {i + 1}
+                        </span>
+                        {i < personaSteps.length - 1 && (
+                          <span className="w-px flex-1 bg-gray-200 mt-1" />
+                        )}
+                      </div>
+                      {/* 내용 */}
+                      <div className="flex-1 pb-1 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-gray-400">
+                            {frameName(step.frameId)}
+                          </span>
+                          <span
+                            className={`text-xs px-1.5 py-0.5 rounded border font-medium ${emo.cls}`}
+                          >
+                            {emo.emoji} {emo.label}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-800 font-medium">{step.action}</p>
+                        <p className="text-xs text-gray-500 italic leading-relaxed">
+                          “{step.thought}”
+                        </p>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ol>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 /* ── 탭 타입 ── */
-type ReportTab = 'summary' | 'findings' | 'chat'
+type ReportTab = 'summary' | 'findings' | 'walkthrough' | 'chat'
+
+function downloadJson(report: TestReport) {
+  const { id, projectName, createdAt, personas, axisScores, findings, taskMetrics, overallSummary, walkthrough } =
+    report
+  const payload = {
+    id,
+    projectName,
+    createdAt,
+    personas: personas.map(({ id, name, role, digitalLevel, goal, device, context }) => ({
+      id,
+      name,
+      role,
+      digitalLevel,
+      goal,
+      device,
+      context,
+    })),
+    axisScores,
+    findings,
+    taskMetrics,
+    overallSummary,
+    walkthrough,
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `personaflow-report-${id}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 /* ── 메인 컴포넌트 ── */
-export default function ReportPage({ report, onNewTest }: ReportPageProps) {
+export default function ReportPage({
+  report,
+  onNewTest,
+  apiKey,
+  model,
+  onRequireKey,
+}: ReportPageProps) {
   const [activeTab, setActiveTab] = useState<ReportTab>('summary')
 
   const findingsCount = report.findings.length
+  const walkCount = report.walkthrough?.length ?? 0
 
   const formattedDate = new Intl.DateTimeFormat('ko-KR', {
     year: 'numeric',
@@ -511,6 +675,7 @@ export default function ReportPage({ report, onNewTest }: ReportPageProps) {
   const tabs: { key: ReportTab; label: string }[] = [
     { key: 'summary', label: '요약' },
     { key: 'findings', label: `발견된 문제 (${findingsCount})` },
+    { key: 'walkthrough', label: `클릭 시뮬레이션 (${walkCount})` },
     { key: 'chat', label: '인라인 채팅' },
   ]
 
@@ -526,7 +691,7 @@ export default function ReportPage({ report, onNewTest }: ReportPageProps) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => alert('준비 중입니다')}
+            onClick={() => downloadJson(report)}
             className="gap-1.5 text-xs h-8"
           >
             <FileJson className="w-3.5 h-3.5" />
@@ -535,7 +700,7 @@ export default function ReportPage({ report, onNewTest }: ReportPageProps) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => alert('준비 중입니다')}
+            onClick={() => window.print()}
             className="gap-1.5 text-xs h-8"
           >
             <Download className="w-3.5 h-3.5" />
@@ -571,7 +736,15 @@ export default function ReportPage({ report, onNewTest }: ReportPageProps) {
       <div className="flex-1 overflow-auto px-8 py-6">
         {activeTab === 'summary' && <SummaryTab report={report} />}
         {activeTab === 'findings' && <FindingsTab findings={report.findings} />}
-        {activeTab === 'chat' && <InlineChatTab report={report} />}
+        {activeTab === 'walkthrough' && <WalkthroughTab report={report} />}
+        {activeTab === 'chat' && (
+          <InlineChatTab
+            report={report}
+            apiKey={apiKey}
+            model={model}
+            onRequireKey={onRequireKey}
+          />
+        )}
       </div>
     </div>
   )

@@ -1,19 +1,24 @@
-import { useEffect, useState } from 'react'
-import { Loader2, Check, Circle } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Loader2, Check, Circle, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
-import { mockReport } from '@/data/mockReport'
+import { Button } from '@/components/ui/button'
+import { analyzeDesign } from '@/lib/ai/gemini'
 import type { PersonaConfig, Frame, TestReport } from '@/types'
 
 interface RunningStepProps {
   personas: PersonaConfig[]
   frames: Frame[]
+  apiKey: string
+  model: string
   onComplete: (report: TestReport) => void
+  onBack: () => void
+  onRequireKey: () => void
 }
 
 const STEPS = [
   { label: '화면 구조 분석 중', progress: 25 },
-  { label: '페르소나 시뮬레이션 실행 중', progress: 50 },
-  { label: '6축 UX 평가 생성 중', progress: 75 },
+  { label: '페르소나 시뮬레이션 실행 중', progress: 55 },
+  { label: '6축 UX 평가 생성 중', progress: 80 },
   { label: '리포트 작성 중', progress: 95 },
 ]
 
@@ -23,41 +28,121 @@ const DEVICE_LABEL: Record<string, string> = {
   tablet: '태블릿',
 }
 
-export default function RunningStep({ personas, frames, onComplete }: RunningStepProps) {
+function buildProjectName(frames: Frame[]): string {
+  if (frames.length === 0) return '시안 분석'
+  if (frames.length === 1) return frames[0].name
+  return `${frames[0].name} 외 ${frames.length - 1}건`
+}
+
+export default function RunningStep({
+  personas,
+  frames,
+  apiKey,
+  model,
+  onComplete,
+  onBack,
+  onRequireKey,
+}: RunningStepProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [isDone, setIsDone] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const cancelledRef = useRef(false)
+  const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopStageAnimation = () => {
+    if (stageTimerRef.current) {
+      clearInterval(stageTimerRef.current)
+      stageTimerRef.current = null
+    }
+  }
+
+  const run = useCallback(async () => {
+    if (!apiKey) {
+      setError('Gemini API 키가 필요합니다. 키를 설정한 뒤 다시 시도하세요.')
+      return
+    }
+    setError(null)
+    setIsDone(false)
+    setCurrentStep(0)
+    setProgress(STEPS[0].progress)
+
+    // 응답 대기 동안 단계 애니메이션 (마지막 단계에서 대기)
+    stopStageAnimation()
+    let idx = 0
+    stageTimerRef.current = setInterval(() => {
+      idx = Math.min(idx + 1, STEPS.length - 1)
+      setCurrentStep(idx)
+      setProgress(STEPS[idx].progress)
+    }, 1800)
+
+    try {
+      const result = await analyzeDesign(apiKey, model, frames, personas)
+      if (cancelledRef.current) return
+      stopStageAnimation()
+
+      const report: TestReport = {
+        id: `report-${Date.now()}`,
+        projectName: buildProjectName(frames),
+        createdAt: new Date(),
+        personas,
+        frames,
+        axisScores: result.axisScores,
+        findings: result.findings,
+        taskMetrics: result.taskMetrics,
+        overallSummary: result.overallSummary,
+        walkthrough: result.walkthrough,
+        frameChats: frames.map((f) => ({ frameId: f.id, messages: [] })),
+      }
+
+      setProgress(100)
+      setIsDone(true)
+      setTimeout(() => {
+        if (!cancelledRef.current) onComplete(report)
+      }, 900)
+    } catch (e) {
+      if (cancelledRef.current) return
+      stopStageAnimation()
+      setError(e instanceof Error ? e.message : 'AI 분석에 실패했습니다.')
+    }
+  }, [apiKey, model, frames, personas, onComplete])
 
   useEffect(() => {
-    let stepIndex = 0
-
-    const tick = () => {
-      if (stepIndex < STEPS.length) {
-        setCurrentStep(stepIndex)
-        setProgress(STEPS[stepIndex].progress)
-        stepIndex++
-        if (stepIndex < STEPS.length) {
-          setTimeout(tick, 1500)
-        } else {
-          setTimeout(() => {
-            setProgress(100)
-            setIsDone(true)
-            setTimeout(() => {
-              const report: TestReport = {
-                ...mockReport,
-                personas,
-                frames,
-              }
-              onComplete(report)
-            }, 1200)
-          }, 1500)
-        }
-      }
+    cancelledRef.current = false
+    run()
+    return () => {
+      cancelledRef.current = true
+      stopStageAnimation()
     }
+  }, [run])
 
-    setTimeout(tick, 400)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  /* ── 에러 화면 ── */
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-8 bg-gray-50 min-h-full">
+        <div className="w-full max-w-md space-y-5 text-center">
+          <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-6 h-6 text-red-600" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-sm font-semibold text-gray-900">분석에 실패했습니다</h2>
+            <p className="text-xs text-gray-500 leading-relaxed">{error}</p>
+          </div>
+          <div className="flex items-center justify-center gap-2">
+            <Button variant="outline" size="sm" onClick={onBack}>
+              페르소나로 돌아가기
+            </Button>
+            <Button variant="outline" size="sm" onClick={onRequireKey}>
+              키 변경
+            </Button>
+            <Button size="sm" onClick={run}>
+              다시 시도
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 flex items-center justify-center p-8 bg-gray-50 min-h-full">
@@ -80,7 +165,7 @@ export default function RunningStep({ personas, frames, onComplete }: RunningSte
             <p className="text-xs text-gray-500">
               {isDone
                 ? '리포트를 불러오는 중입니다...'
-                : '페르소나 관점에서 UX를 분석하고 있습니다'}
+                : '페르소나가 시안을 직접 사용하며 UX를 분석하고 있습니다'}
             </p>
           </div>
         </div>
@@ -172,7 +257,7 @@ export default function RunningStep({ personas, frames, onComplete }: RunningSte
         </div>
 
         <p className="text-xs text-gray-400 text-center">
-          AI가 각 페르소나 관점에서 6축 UX 기준을 평가합니다
+          Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다
         </p>
       </div>
     </div>

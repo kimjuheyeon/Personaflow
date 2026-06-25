@@ -10,50 +10,19 @@ import {
   SelectItem,
   SelectValue,
 } from '@/components/ui/select'
-import type { PersonaConfig, DigitalLevel, DeviceType } from '@/types'
+import { suggestPersonas } from '@/lib/ai/gemini'
+import type { PersonaConfig, DigitalLevel, DeviceType, Frame } from '@/types'
 
 interface PersonaStepProps {
   personas: PersonaConfig[]
   onPersonasChange: (personas: PersonaConfig[]) => void
   onNext: () => void
   onBack: () => void
+  frames: Frame[]
+  apiKey: string
+  model: string
+  onRequireKey: () => void
 }
-
-const AI_PERSONAS: PersonaConfig[] = [
-  {
-    id: 'p1',
-    name: '김지수',
-    role: 'UX 디자이너',
-    digitalLevel: 'expert',
-    goal: '새로운 협업 도구 도입 검토',
-    device: 'desktop',
-    context: '기존 도구 대체 검토 중',
-    isAiGenerated: true,
-    avatar: '👩‍💻',
-  },
-  {
-    id: 'p2',
-    name: '박민준',
-    role: '비전공 관리자',
-    digitalLevel: 'beginner',
-    goal: '팀 업무 현황 파악',
-    device: 'mobile',
-    context: '처음 써보는 유저',
-    isAiGenerated: true,
-    avatar: '👨‍💼',
-  },
-  {
-    id: 'p3',
-    name: '이수현',
-    role: '마케터',
-    digitalLevel: 'intermediate',
-    goal: '캠페인 성과 분석',
-    device: 'desktop',
-    context: '기존 도구 대체 검토 중',
-    isAiGenerated: true,
-    avatar: '👩‍🎨',
-  },
-]
 
 const DIGITAL_LABEL: Record<DigitalLevel, string> = {
   beginner: '초급',
@@ -87,19 +56,39 @@ export default function PersonaStep({
   onPersonasChange,
   onNext,
   onBack,
+  frames,
+  apiKey,
+  model,
+  onRequireKey,
 }: PersonaStepProps) {
   const [activeTab, setActiveTab] = useState<'ai' | 'manual'>('ai')
   const [aiPersonas, setAiPersonas] = useState<PersonaConfig[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [form, setForm] = useState(EMPTY_FORM)
 
-  const handleAiRecommend = () => {
+  const handleAiRecommend = async () => {
+    if (!apiKey) {
+      onRequireKey()
+      return
+    }
+    if (frames.length === 0) {
+      setError('먼저 시안을 업로드해주세요.')
+      return
+    }
     setLoading(true)
-    setTimeout(() => {
-      setAiPersonas(AI_PERSONAS)
+    setError(null)
+    try {
+      const list = await suggestPersonas(apiKey, model, frames)
+      setAiPersonas(list)
+      // 추천 결과는 기본 전체 선택
+      setSelectedIds(new Set(list.map((p) => p.id)))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'AI 추천에 실패했습니다.')
+    } finally {
       setLoading(false)
-    }, 1500)
+    }
   }
 
   const toggleSelect = (id: string) => {
@@ -182,7 +171,10 @@ export default function PersonaStep({
           {aiPersonas.length === 0 && !loading && (
             <div className="py-12 border border-gray-200 rounded-md bg-white text-center space-y-3">
               <p className="text-sm text-gray-600 font-medium">AI가 최적의 페르소나를 추천합니다</p>
-              <p className="text-xs text-gray-400">업로드한 시안을 분석해 사용자 유형을 제안합니다</p>
+              <p className="text-xs text-gray-400">업로드한 시안을 Gemini가 분석해 사용자 유형을 제안합니다</p>
+              {error && (
+                <p className="text-xs text-red-600 max-w-md mx-auto leading-relaxed px-4">{error}</p>
+              )}
               <Button onClick={handleAiRecommend} size="sm">
                 AI 페르소나 추천받기
               </Button>
@@ -192,13 +184,24 @@ export default function PersonaStep({
           {loading && (
             <div className="flex flex-col items-center justify-center py-12 gap-3 border border-gray-200 rounded-md bg-white">
               <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-              <p className="text-sm text-gray-500">페르소나를 분석하는 중...</p>
+              <p className="text-sm text-gray-500">시안을 분석해 페르소나를 생성하는 중...</p>
             </div>
           )}
 
           {!loading && aiPersonas.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs text-gray-500">{selectedIds.size}개 선택 · 클릭하여 선택/해제</p>
+              {error && (
+                <p className="text-xs text-red-600 leading-relaxed">{error}</p>
+              )}
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-gray-500">{selectedIds.size}개 선택 · 클릭하여 선택/해제</p>
+                <button
+                  onClick={handleAiRecommend}
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  다시 추천받기
+                </button>
+              </div>
 
               {/* 테이블형 카드 */}
               <div className="border border-gray-200 rounded-md overflow-hidden">

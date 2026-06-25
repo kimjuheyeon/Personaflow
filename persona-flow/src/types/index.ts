@@ -59,6 +59,16 @@ export interface FrameChat {
   messages: ChatMessage[]
 }
 
+export type WalkEmotion = 'positive' | 'neutral' | 'confused' | 'frustrated'
+
+export interface WalkStep {
+  frameId: string
+  personaName: string
+  action: string
+  thought: string
+  emotion: WalkEmotion
+}
+
 export interface TestReport {
   id: string
   projectName: string
@@ -70,6 +80,7 @@ export interface TestReport {
   taskMetrics: TaskMetrics
   overallSummary: string
   frameChats: FrameChat[]
+  walkthrough?: WalkStep[]
 }
 
 export type AppStep = 'upload' | 'persona' | 'running' | 'report'

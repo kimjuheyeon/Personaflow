@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Check, RotateCcw } from 'lucide-react'
 import UploadStep from './pages/UploadStep'
 import PersonaStep from './pages/PersonaStep'
 import RunningStep from './pages/RunningStep'
 import ReportPage from './pages/ReportPage'
+import ApiKeyModal from './components/ApiKeyModal'
+import { useApiKey } from './hooks/useApiKey'
+import { MODEL_OPTIONS } from './lib/ai/keyStore'
 import type { Frame, PersonaConfig, TestReport } from './types'
 
 type TestStep = 'upload' | 'persona' | 'running' | 'report'
@@ -27,11 +30,18 @@ const BREADCRUMB: Record<TestStep, string> = {
 function Sidebar({
   step,
   onReset,
+  hasKey,
+  model,
+  onOpenKey,
 }: {
   step: TestStep
   onReset: () => void
+  hasKey: boolean
+  model: string
+  onOpenKey: () => void
 }) {
   const currentIndex = STEP_ORDER.indexOf(step)
+  const modelLabel = MODEL_OPTIONS.find((m) => m.id === model)?.label ?? model
 
   // running: 모두 active처럼 (현재), report: 모두 completed
   const getStepState = (index: number): 'completed' | 'current' | 'future' => {
@@ -117,9 +127,30 @@ function Sidebar({
         </ul>
       </nav>
 
+      {/* API 키 상태 */}
+      <div className="px-4 py-3 border-t border-slate-700">
+        <button
+          onClick={onOpenKey}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+        >
+          <span
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              hasKey ? 'bg-green-400' : 'bg-red-400'
+            }`}
+          />
+          <span className="flex-1 text-left truncate">
+            {hasKey ? `Gemini 연결됨` : 'API 키 미설정'}
+          </span>
+          <span className="text-slate-500">⚙</span>
+        </button>
+        {hasKey && (
+          <p className="px-3 pt-1 text-[10px] text-slate-600 truncate">{modelLabel}</p>
+        )}
+      </div>
+
       {/* 하단 버전 */}
-      <div className="px-5 py-4 border-t border-slate-700">
-        <p className="text-xs text-slate-600">PersonaFlow v0.1 MVP</p>
+      <div className="px-5 py-3 border-t border-slate-700">
+        <p className="text-xs text-slate-600">PersonaFlow v0.2</p>
       </div>
     </aside>
   )
@@ -130,6 +161,15 @@ function App() {
   const [frames, setFrames] = useState<Frame[]>([])
   const [personas, setPersonas] = useState<PersonaConfig[]>([])
   const [report, setReport] = useState<TestReport | null>(null)
+
+  const { apiKey, model, hasKey, setApiKey, clearApiKey, setModel } = useApiKey()
+  const [keyModalOpen, setKeyModalOpen] = useState(false)
+
+  // 키가 없으면 최초 진입 시 모달 자동 표시
+  useEffect(() => {
+    if (!hasKey) setKeyModalOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const resetAll = () => {
     setStep('upload')
@@ -147,9 +187,26 @@ function App() {
     setStep('report')
   }
 
+  const handleSaveKey = (key: string, m: string) => {
+    setApiKey(key)
+    setModel(m)
+    setKeyModalOpen(false)
+  }
+
+  const handleClearKey = () => {
+    clearApiKey()
+    setKeyModalOpen(true)
+  }
+
   return (
     <div className="min-h-screen flex">
-      <Sidebar step={step} onReset={resetAll} />
+      <Sidebar
+        step={step}
+        onReset={resetAll}
+        hasKey={hasKey}
+        model={model}
+        onOpenKey={() => setKeyModalOpen(true)}
+      />
 
       {/* 메인 영역 */}
       <div className="flex-1 flex flex-col bg-gray-50 min-w-0">
@@ -175,20 +232,44 @@ function App() {
               onPersonasChange={setPersonas}
               onNext={handlePersonaNext}
               onBack={handlePersonaBack}
+              frames={frames}
+              apiKey={apiKey}
+              model={model}
+              onRequireKey={() => setKeyModalOpen(true)}
             />
           )}
           {step === 'running' && (
             <RunningStep
               personas={personas}
               frames={frames}
+              apiKey={apiKey}
+              model={model}
               onComplete={handleAnalysisComplete}
+              onBack={handlePersonaBack}
+              onRequireKey={() => setKeyModalOpen(true)}
             />
           )}
           {step === 'report' && report && (
-            <ReportPage report={report} onNewTest={resetAll} />
+            <ReportPage
+              report={report}
+              onNewTest={resetAll}
+              apiKey={apiKey}
+              model={model}
+              onRequireKey={() => setKeyModalOpen(true)}
+            />
           )}
         </main>
       </div>
+
+      <ApiKeyModal
+        open={keyModalOpen}
+        initialKey={apiKey}
+        currentModel={model}
+        dismissable={hasKey}
+        onSave={handleSaveKey}
+        onClose={() => setKeyModalOpen(false)}
+        onClear={handleClearKey}
+      />
     </div>
   )
 }
