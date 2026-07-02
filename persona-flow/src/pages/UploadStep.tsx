@@ -1,7 +1,21 @@
 import { useCallback, useState } from 'react'
-import { Check, GitCompare, ImageIcon, Pencil, Plus, Upload, X } from 'lucide-react'
+import {
+  Check,
+  GitCompare,
+  GripVertical,
+  ImageIcon,
+  Pencil,
+  Plus,
+  Upload,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  getFrameSecondaryLabel,
+  normalizeFrameOrder,
+  stripFileExtension,
+} from '@/lib/frameNaming'
 import type { ABTestConfig, DesignVariant, Frame, TestMode, VariantId } from '@/types'
 
 interface UploadStepProps {
@@ -18,10 +32,16 @@ interface UploadStepProps {
 
 const CRITERIA_OPTIONS = ['첫인상', '이해도', '전환 유도', '탐색 흐름', '신뢰감']
 
+type DragScope = 'single' | VariantId
+type DraggedFrame = { scope: DragScope; frameId: string }
+
 function makeFrame(file: File, prefix: string): Frame {
   return {
     id: `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    name: file.name.replace(/\.[^.]+$/, ''),
+    name: 'Screen00',
+    originalName: stripFileExtension(file.name),
+    userLabel: '',
+    flowOrder: 0,
     imageUrl: URL.createObjectURL(file),
     file,
   }
@@ -43,6 +63,8 @@ export default function UploadStep({
   onNext,
 }: UploadStepProps) {
   const [dragTarget, setDragTarget] = useState<'single' | VariantId | null>(null)
+  const [draggedFrame, setDraggedFrame] = useState<DraggedFrame | null>(null)
+  const [dropFrameId, setDropFrameId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
 
@@ -51,15 +73,16 @@ export default function UploadStep({
       const newFrames = Array.from(files)
         .filter(isValidImage)
         .map((file) => makeFrame(file, 'frame'))
-      onFramesChange([...frames, ...newFrames])
+      onFramesChange(normalizeFrameOrder([...frames, ...newFrames]))
     },
     [frames, onFramesChange]
   )
 
   const updateVariantFrames = (variantId: VariantId, nextFrames: Frame[]) => {
+    const normalizedFrames = normalizeFrameOrder(nextFrames)
     onVariantsChange(
       variants.map((variant) =>
-        variant.id === variantId ? { ...variant, frames: nextFrames } : variant
+        variant.id === variantId ? { ...variant, frames: normalizedFrames } : variant
       )
     )
   }
@@ -125,7 +148,7 @@ export default function UploadStep({
   const handleDeleteSingle = (id: string) => {
     const frame = frames.find((item) => item.id === id)
     if (frame) revokeFrameUrl(frame)
-    onFramesChange(frames.filter((item) => item.id !== id))
+    onFramesChange(normalizeFrameOrder(frames.filter((item) => item.id !== id)))
   }
 
   const handleDeleteVariant = (variantId: VariantId, id: string) => {
@@ -141,13 +164,14 @@ export default function UploadStep({
 
   const startEdit = (frame: Frame) => {
     setEditingId(frame.id)
-    setEditingName(frame.name)
+    setEditingName(frame.userLabel ?? '')
   }
 
   const commitSingleEdit = (id: string) => {
+    const userLabel = editingName.trim() || undefined
     onFramesChange(
       frames.map((frame) =>
-        frame.id === id ? { ...frame, name: editingName.trim() || frame.name } : frame
+        frame.id === id ? { ...frame, userLabel } : frame
       )
     )
     setEditingId(null)
@@ -156,13 +180,85 @@ export default function UploadStep({
   const commitVariantEdit = (variantId: VariantId, id: string) => {
     const variant = variants.find((item) => item.id === variantId)
     if (!variant) return
+    const userLabel = editingName.trim() || undefined
     updateVariantFrames(
       variantId,
       variant.frames.map((frame) =>
-        frame.id === id ? { ...frame, name: editingName.trim() || frame.name } : frame
+        frame.id === id ? { ...frame, userLabel } : frame
       )
     )
     setEditingId(null)
+  }
+
+  const reorderFrames = (list: Frame[], activeId: string, overId: string) => {
+    const activeIndex = list.findIndex((frame) => frame.id === activeId)
+    const overIndex = list.findIndex((frame) => frame.id === overId)
+    if (activeIndex < 0 || overIndex < 0 || activeIndex === overIndex) return list
+
+    const next = [...list]
+    const [moved] = next.splice(activeIndex, 1)
+    next.splice(overIndex, 0, moved)
+    return normalizeFrameOrder(next)
+  }
+
+  const handleFrameDragStart = (
+    scope: DragScope,
+    frameId: string,
+    e: React.DragEvent<HTMLDivElement>
+  ) => {
+    e.stopPropagation()
+    setDraggedFrame({ scope, frameId })
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/personaflow-frame', frameId)
+  }
+
+  const handleFrameDragOver = (
+    scope: DragScope,
+    frameId: string,
+    e: React.DragEvent<HTMLDivElement>
+  ) => {
+    if (Array.from(e.dataTransfer.types).includes('Files')) {
+      e.preventDefault()
+      return
+    }
+    if (!draggedFrame || draggedFrame.scope !== scope || draggedFrame.frameId === frameId) return
+
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    setDropFrameId(frameId)
+  }
+
+  const handleFrameDrop = (
+    scope: DragScope,
+    frameId: string,
+    e: React.DragEvent<HTMLDivElement>
+  ) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (!draggedFrame || draggedFrame.scope !== scope) {
+      setDraggedFrame(null)
+      setDropFrameId(null)
+      return
+    }
+
+    if (scope === 'single') {
+      onFramesChange(reorderFrames(frames, draggedFrame.frameId, frameId))
+    } else {
+      const variant = variants.find((item) => item.id === scope)
+      if (variant) {
+        updateVariantFrames(scope, reorderFrames(variant.frames, draggedFrame.frameId, frameId))
+      }
+    }
+
+    setDraggedFrame(null)
+    setDropFrameId(null)
+  }
+
+  const handleFrameDragEnd = () => {
+    setDraggedFrame(null)
+    setDropFrameId(null)
   }
 
   const handleEditKeyDown = (e: React.KeyboardEvent, commit: () => void) => {
@@ -190,6 +286,7 @@ export default function UploadStep({
       : Boolean(variantA?.frames.length && variantB?.frames.length)
 
   const renderFrameGrid = (
+    scope: DragScope,
     list: Frame[],
     onDelete: (id: string) => void,
     onCommitEdit: (id: string) => void
@@ -198,7 +295,16 @@ export default function UploadStep({
       {list.map((frame) => (
         <div
           key={frame.id}
-          className="bg-white rounded-md border border-gray-200 overflow-hidden group"
+          draggable={editingId !== frame.id}
+          onDragStart={(e) => handleFrameDragStart(scope, frame.id, e)}
+          onDragOver={(e) => handleFrameDragOver(scope, frame.id, e)}
+          onDrop={(e) => handleFrameDrop(scope, frame.id, e)}
+          onDragEnd={handleFrameDragEnd}
+          className={`bg-white rounded-md border overflow-hidden group transition ${
+            dropFrameId === frame.id
+              ? 'border-blue-400 ring-2 ring-blue-100'
+              : 'border-gray-200'
+          } ${draggedFrame?.frameId === frame.id ? 'opacity-60' : ''}`}
         >
           <div className="aspect-video bg-gray-100 relative overflow-hidden">
             {frame.imageUrl ? (
@@ -228,6 +334,7 @@ export default function UploadStep({
                   onChange={(e) => setEditingName(e.target.value)}
                   onKeyDown={(e) => handleEditKeyDown(e, () => onCommitEdit(frame.id))}
                   onBlur={() => onCommitEdit(frame.id)}
+                  placeholder={frame.originalName ?? '화면 역할 입력'}
                   className="h-6 text-xs px-1.5"
                   autoFocus
                 />
@@ -239,10 +346,18 @@ export default function UploadStep({
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-1 group/name">
-                <span className="text-xs text-gray-700 truncate flex-1 leading-tight">
-                  {frame.name}
-                </span>
+              <div className="flex items-start gap-1 group/name">
+                <GripVertical className="w-3.5 h-3.5 text-gray-300 mt-0.5 flex-shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <span className="block text-xs font-semibold text-gray-800 truncate leading-tight">
+                    {frame.name}
+                  </span>
+                  {getFrameSecondaryLabel(frame) && (
+                    <span className="mt-0.5 block text-[10px] text-gray-400 truncate leading-tight">
+                      {getFrameSecondaryLabel(frame)}
+                    </span>
+                  )}
+                </div>
                 <button
                   onClick={() => startEdit(frame)}
                   className="w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 opacity-0 group-hover/name:opacity-100 transition-opacity flex-shrink-0"
@@ -331,6 +446,7 @@ export default function UploadStep({
       ) : (
         <div className="space-y-4">
           {renderFrameGrid(
+            variant.id,
             variant.frames,
             (id) => handleDeleteVariant(variant.id, id),
             (id) => commitVariantEdit(variant.id, id)
@@ -409,7 +525,7 @@ export default function UploadStep({
             </>
           ) : (
             <div className="space-y-4">
-              {renderFrameGrid(frames, handleDeleteSingle, commitSingleEdit)}
+              {renderFrameGrid('single', frames, handleDeleteSingle, commitSingleEdit)}
               {renderAddMore('single', handleSingleDrop, 'single-upload-more')}
               <input
                 id="single-upload-more"
@@ -473,7 +589,7 @@ export default function UploadStep({
           </div>
 
           <p className="text-xs text-gray-400">
-            같은 플로우의 화면을 A안/B안에 같은 순서로 올리면 비교 정확도가 올라갑니다.
+            업로드 순서가 플로우 순서가 됩니다. 카드를 드래그하면 Screen01, Screen02 순서가 자동으로 다시 정렬됩니다.
           </p>
         </div>
       )}

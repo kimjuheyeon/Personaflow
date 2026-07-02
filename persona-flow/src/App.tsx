@@ -238,11 +238,18 @@ function Sidebar({
 }
 
 async function prepareFrameForHistory(frame: Frame): Promise<Frame> {
+  const frameMeta = {
+    originalName: frame.originalName,
+    userLabel: frame.userLabel,
+    flowOrder: frame.flowOrder,
+  }
+
   if (frame.imageUrl.startsWith('data:')) {
     return {
       id: frame.id,
       name: frame.name,
       imageUrl: frame.imageUrl,
+      ...frameMeta,
     }
   }
 
@@ -252,12 +259,14 @@ async function prepareFrameForHistory(frame: Frame): Promise<Frame> {
       id: frame.id,
       name: frame.name,
       imageUrl: `data:${image.mimeType};base64,${image.data}`,
+      ...frameMeta,
     }
   } catch {
     return {
       id: frame.id,
       name: frame.name,
       imageUrl: frame.imageUrl,
+      ...frameMeta,
     }
   }
 }

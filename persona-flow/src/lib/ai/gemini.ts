@@ -16,6 +16,7 @@ import type {
   VariantId,
 } from '@/types'
 import { imageToBase64 } from '@/lib/image'
+import { getFrameDisplayName, getFrameSecondaryLabel } from '@/lib/frameNaming'
 import {
   AXES,
   personaSuggestionPrompt,
@@ -116,14 +117,31 @@ function parseJson<T>(text: string): T {
   }
 }
 
-type FrameInput = { id: string; name: string; file?: File; imageUrl: string }
+type FrameInput = {
+  id: string
+  name: string
+  originalName?: string
+  userLabel?: string
+  flowOrder?: number
+  file?: File
+  imageUrl: string
+}
+
+function framePromptSecondary(frame: FrameInput): string {
+  const secondary = getFrameSecondaryLabel(frame)
+  return secondary ? ` | 보조명: ${secondary}` : ''
+}
 
 async function buildFrameParts(frames: FrameInput[]): Promise<Part[]> {
   const parts: Part[] = []
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i]
     const img = await imageToBase64(f.file ?? f.imageUrl)
-    parts.push({ text: `■ 화면 #${i + 1} | ID: ${f.id} | 이름: ${f.name}` })
+    parts.push({
+      text: `■ ${f.name} | 순서: ${f.flowOrder ?? i + 1} | ID: ${
+        f.id
+      }${framePromptSecondary(f)}`,
+    })
     parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
   }
   return parts
@@ -137,7 +155,9 @@ async function buildVariantParts(variants: DesignVariant[]): Promise<Part[]> {
       const frame = variant.frames[i]
       const img = await imageToBase64(frame.file ?? frame.imageUrl)
       parts.push({
-        text: `■ ${variant.id}안 화면 #${i + 1} | ID: ${frame.id} | 이름: ${frame.name}`,
+        text: `■ ${variant.id}안 ${frame.name} | 순서: ${
+          frame.flowOrder ?? i + 1
+        } | ID: ${frame.id}${framePromptSecondary(frame)}`,
       })
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
     }
@@ -492,10 +512,7 @@ export async function analyzeDesign(
         parts: [
           ...frameParts,
           {
-            text: analysisPrompt(
-              personas,
-              frames.map((f) => ({ id: f.id, name: f.name }))
-            ),
+            text: analysisPrompt(personas, frames),
           },
         ],
       },
@@ -569,7 +586,13 @@ export async function analyzeABDesign(
 export async function chatWithPersona(
   apiKey: string,
   model: string,
-  frame: { name: string; file?: File; imageUrl: string } | null,
+  frame: {
+    name: string
+    originalName?: string
+    userLabel?: string
+    file?: File
+    imageUrl: string
+  } | null,
   persona: PersonaConfig,
   history: ChatMessage[],
   question: string
@@ -583,8 +606,9 @@ export async function chatWithPersona(
       /* 이미지 없이도 텍스트로 진행 */
     }
   }
+  const frameName = frame ? getFrameDisplayName(frame) : '제공된 화면'
   firstParts.push({
-    text: `지금 보고 있는 화면: "${frame?.name ?? '제공된 화면'}". 이 화면을 사용하는 입장에서 답하세요.`,
+    text: `지금 보고 있는 화면: "${frameName}". 이 화면을 사용하는 입장에서 답하세요.`,
   })
 
   const contents: Content[] = [
@@ -602,7 +626,7 @@ export async function chatWithPersona(
   return generateContent({
     apiKey,
     model,
-    systemInstruction: chatSystemPrompt(persona, frame?.name ?? '화면'),
+    systemInstruction: chatSystemPrompt(persona, frameName),
     contents,
     temperature: 0.8,
   })

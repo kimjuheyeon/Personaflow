@@ -31,6 +31,9 @@ function normalizeFrame(frame: Frame): Frame {
     id: frame.id,
     name: frame.name,
     imageUrl: frame.imageUrl,
+    originalName: frame.originalName,
+    userLabel: frame.userLabel,
+    flowOrder: frame.flowOrder,
   }
 }
 

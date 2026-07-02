@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { chatWithPersona } from '@/lib/ai/gemini'
+import { getFrameDisplayName } from '@/lib/frameNaming'
 import type {
   TestReport,
   Finding,
@@ -19,6 +20,7 @@ import type {
   WalkEmotion,
   ChatMessage,
   FeedbackThread,
+  Frame,
 } from '@/types'
 
 interface ReportPageProps {
@@ -55,6 +57,26 @@ function scoreBarColor(score: number) {
   if (score <= 60) return '[&>div]:bg-amber-400'
   if (score <= 80) return '[&>div]:bg-blue-500'
   return '[&>div]:bg-green-500'
+}
+
+function findReportFrame(
+  report: TestReport,
+  frameId: string
+): { frame: Frame; variantName?: string } | undefined {
+  for (const variant of report.variants ?? []) {
+    const frame = variant.frames.find((item) => item.id === frameId)
+    if (frame) return { frame, variantName: `${variant.id}안` }
+  }
+
+  const frame = report.frames.find((item) => item.id === frameId)
+  return frame ? { frame } : undefined
+}
+
+function frameNameFromReport(report: TestReport, frameId: string): string {
+  const context = findReportFrame(report, frameId)
+  if (!context) return frameId
+  const name = getFrameDisplayName(context.frame)
+  return context.variantName ? `${context.variantName} ${name}` : name
 }
 
 const DIGITAL_LABEL: Record<string, string> = {
@@ -329,7 +351,7 @@ function ABComparisonTab({ report }: { report: TestReport }) {
 /* ── 탭2 발견된 문제 ── */
 type FilterType = 'all' | SeverityLevel
 
-function FindingRow({ finding }: { finding: Finding }) {
+function FindingRow({ finding, frameName }: { finding: Finding; frameName?: string }) {
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -380,7 +402,7 @@ function FindingRow({ finding }: { finding: Finding }) {
 
           {finding.frameId && (
             <p className="text-xs text-gray-400">
-              관련 화면: <span className="font-medium text-gray-600">{finding.frameId}</span>
+              관련 화면: <span className="font-medium text-gray-600">{frameName ?? finding.frameId}</span>
             </p>
           )}
         </div>
@@ -389,8 +411,9 @@ function FindingRow({ finding }: { finding: Finding }) {
   )
 }
 
-function FindingsTab({ findings }: { findings: Finding[] }) {
+function FindingsTab({ report }: { report: TestReport }) {
   const [filter, setFilter] = useState<FilterType>('all')
+  const findings = report.findings
 
   const filtered = filter === 'all' ? findings : findings.filter((f) => f.severity === filter)
 
@@ -432,7 +455,13 @@ function FindingsTab({ findings }: { findings: Finding[] }) {
 
         {filtered.length > 0 ? (
           filtered.map((finding) => (
-            <FindingRow key={finding.id} finding={finding} />
+            <FindingRow
+              key={finding.id}
+              finding={finding}
+              frameName={
+                finding.frameId ? frameNameFromReport(report, finding.frameId) : undefined
+              }
+            />
           ))
         ) : (
           <div className="text-center py-10 text-gray-400">
@@ -553,13 +582,28 @@ function InlineChatTab({
     setInput('')
     setIsTyping(true)
 
-    const frame = report.frames.find((f) => f.id === selectedFrameId) ?? null
+    const frameContext = findReportFrame(report, selectedFrameId)
+    const fallbackFrame = frames.find((frame) => frame.id === selectedFrameId)
+    const frame = frameContext?.frame ?? fallbackFrame ?? null
+    const frameDisplayName = frameContext
+      ? frameNameFromReport(report, selectedFrameId)
+      : frame
+        ? getFrameDisplayName(frame)
+        : ''
+    const chatFrame = frame
+      ? {
+          ...frame,
+          name: frameDisplayName,
+          originalName: undefined,
+          userLabel: undefined,
+        }
+      : null
 
     try {
       const response = await chatWithPersona(
         apiKey,
         model,
-        frame,
+        chatFrame,
         currentPersona,
         history,
         text.trim()
@@ -596,7 +640,9 @@ function InlineChatTab({
             >
               {frames.map((frame) => (
                 <option key={frame.id} value={frame.id}>
-                  {frame.name}
+                  {findReportFrame(report, frame.id)
+                    ? frameNameFromReport(report, frame.id)
+                    : getFrameDisplayName(frame)}
                 </option>
               ))}
             </select>
@@ -729,8 +775,7 @@ function InlineChatTab({
 /* ── 탭4 AI 클릭 시뮬레이션 ── */
 function WalkthroughTab({ report }: { report: TestReport }) {
   const steps = report.walkthrough ?? []
-  const frameName = (id: string) =>
-    report.frames.find((f) => f.id === id)?.name ?? id
+  const frameName = (id: string) => frameNameFromReport(report, id)
 
   if (steps.length === 0) {
     return (
@@ -952,7 +997,7 @@ export default function ReportPage({
       <div className="flex-1 overflow-auto px-8 py-6">
         {activeTab === 'summary' && <SummaryTab report={report} />}
         {activeTab === 'ab' && <ABComparisonTab report={report} />}
-        {activeTab === 'findings' && <FindingsTab findings={report.findings} />}
+        {activeTab === 'findings' && <FindingsTab report={report} />}
         {activeTab === 'walkthrough' && <WalkthroughTab report={report} />}
         {activeTab === 'chat' && (
           <InlineChatTab

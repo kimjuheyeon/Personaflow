@@ -3,7 +3,10 @@
  * PersonaFlow는 "AI 페르소나가 시안을 직접 사용해보며 UX 피드백을 주는" 도구다.
  */
 
-import type { ABTestConfig, DesignVariant, PersonaConfig } from '@/types'
+import { getFrameDisplayName } from '@/lib/frameNaming'
+import type { ABTestConfig, DesignVariant, Frame, PersonaConfig } from '@/types'
+
+type PromptFrame = Pick<Frame, 'id' | 'name' | 'originalName' | 'userLabel' | 'flowOrder'>
 
 /** 6축 UX 평가 기준 (점수는 모든 분석에서 이 6개 축으로 통일) */
 export const AXES: { axis: number; label: string; icon: string }[] = [
@@ -53,7 +56,7 @@ export function personaSuggestionPrompt(frameCount: number): string {
 
 export function analysisPrompt(
   personas: PersonaConfig[],
-  frames: { id: string; name: string }[]
+  frames: PromptFrame[]
 ): string {
   const personaText = personas
     .map(
@@ -64,13 +67,20 @@ export function analysisPrompt(
     )
     .join('\n')
 
-  const frameText = frames.map((f) => `- ID: ${f.id} | 이름: ${f.name}`).join('\n')
+  const frameText = frames
+    .map(
+      (f, i) =>
+        `- ${getFrameDisplayName(f)} | 순서: ${f.flowOrder ?? i + 1} | ID: ${f.id}`
+    )
+    .join('\n')
 
   return `당신은 UX 평가 전문가이자, 아래 페르소나들로 빙의해 시안을 "직접 사용해보는" 가상 사용자입니다.
 첨부된 화면 이미지들을 보고, 각 페르소나의 입장에서 화면을 탐색하고 클릭하며 과업을 수행한다고 상상하세요.
 
 ## 분석 대상 화면
 ${frameText}
+
+화면은 위에 적힌 순서대로 하나의 사용자 플로우를 구성합니다. 반드시 Screen01부터 순서대로 탐색한다고 가정하세요.
 
 ## 테스트 페르소나
 ${personaText}
@@ -121,7 +131,12 @@ export function abAnalysisPrompt(
   const variantText = variants
     .map((variant) => {
       const frameText = variant.frames
-        .map((frame, i) => `  - ${variant.id}#${i + 1} | ID: ${frame.id} | 이름: ${frame.name}`)
+        .map(
+          (frame, i) =>
+            `  - ${variant.id}안 ${getFrameDisplayName(frame)} | 순서: ${
+              frame.flowOrder ?? i + 1
+            } | ID: ${frame.id}`
+        )
         .join('\n')
       return `${variant.name} (${variant.id}안)\n${frameText}`
     })
@@ -141,6 +156,8 @@ ${config.criteria.length > 0 ? config.criteria.map((item) => `- ${item}`).join('
 
 ## 비교 대상 화면
 ${variantText}
+
+A안과 B안의 같은 Screen 번호는 같은 플로우 지점의 대응 화면입니다. 각 안은 Screen01부터 순서대로 사용한다고 가정하세요.
 
 ## 테스트 페르소나
 ${personaText}

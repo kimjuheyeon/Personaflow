@@ -3,6 +3,7 @@ import { Loader2, Check, Circle, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { analyzeABDesign, analyzeDesign } from '@/lib/ai/gemini'
+import { getFrameProjectLabel } from '@/lib/frameNaming'
 import type {
   ABTestConfig,
   DesignVariant,
@@ -44,8 +45,8 @@ function buildProjectName(frames: Frame[], testMode: TestMode, abConfig: ABTestC
     return goal ? `A/B 테스트 · ${goal}` : '화면 A/B 테스트'
   }
   if (frames.length === 0) return '시안 분석'
-  if (frames.length === 1) return frames[0].name
-  return `${frames[0].name} 외 ${frames.length - 1}건`
+  if (frames.length === 1) return getFrameProjectLabel(frames[0])
+  return `${getFrameProjectLabel(frames[0])} 외 ${frames.length - 1}건`
 }
 
 export default function RunningStep({

@@ -8,6 +8,9 @@ export interface Frame {
   id: string
   name: string
   imageUrl: string
+  originalName?: string
+  userLabel?: string
+  flowOrder?: number
   file?: File
 }
 
