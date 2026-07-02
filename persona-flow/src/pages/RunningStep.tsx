@@ -2,12 +2,22 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Check, Circle, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
-import { analyzeDesign } from '@/lib/ai/gemini'
-import type { PersonaConfig, Frame, TestReport } from '@/types'
+import { analyzeABDesign, analyzeDesign } from '@/lib/ai/gemini'
+import type {
+  ABTestConfig,
+  DesignVariant,
+  PersonaConfig,
+  Frame,
+  TestMode,
+  TestReport,
+} from '@/types'
 
 interface RunningStepProps {
   personas: PersonaConfig[]
   frames: Frame[]
+  testMode: TestMode
+  variants: DesignVariant[]
+  abConfig: ABTestConfig
   apiKey: string
   model: string
   onComplete: (report: TestReport) => void
@@ -28,7 +38,11 @@ const DEVICE_LABEL: Record<string, string> = {
   tablet: '태블릿',
 }
 
-function buildProjectName(frames: Frame[]): string {
+function buildProjectName(frames: Frame[], testMode: TestMode, abConfig: ABTestConfig): string {
+  if (testMode === 'ab') {
+    const goal = abConfig.goal.trim()
+    return goal ? `A/B 테스트 · ${goal}` : '화면 A/B 테스트'
+  }
   if (frames.length === 0) return '시안 분석'
   if (frames.length === 1) return frames[0].name
   return `${frames[0].name} 외 ${frames.length - 1}건`
@@ -37,6 +51,9 @@ function buildProjectName(frames: Frame[]): string {
 export default function RunningStep({
   personas,
   frames,
+  testMode,
+  variants,
+  abConfig,
   apiKey,
   model,
   onComplete,
@@ -77,22 +94,33 @@ export default function RunningStep({
     }, 1800)
 
     try {
-      const result = await analyzeDesign(apiKey, model, frames, personas)
+      const result =
+        testMode === 'ab'
+          ? await analyzeABDesign(apiKey, model, variants, personas, abConfig)
+          : await analyzeDesign(apiKey, model, frames, personas)
       if (cancelledRef.current) return
       stopStageAnimation()
 
+      const reportFrames =
+        testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
+
       const report: TestReport = {
         id: `report-${Date.now()}`,
-        projectName: buildProjectName(frames),
+        projectName: buildProjectName(reportFrames, testMode, abConfig),
         createdAt: new Date(),
+        testMode,
         personas,
-        frames,
+        frames: reportFrames,
+        variants: testMode === 'ab' ? variants : undefined,
+        abConfig: testMode === 'ab' ? abConfig : undefined,
+        abComparison: result.abComparison,
         axisScores: result.axisScores,
         findings: result.findings,
         taskMetrics: result.taskMetrics,
         overallSummary: result.overallSummary,
         walkthrough: result.walkthrough,
-        frameChats: frames.map((f) => ({ frameId: f.id, messages: [] })),
+        frameChats: reportFrames.map((f) => ({ frameId: f.id, messages: [] })),
+        feedbackThreads: [],
       }
 
       setProgress(100)
@@ -105,13 +133,16 @@ export default function RunningStep({
       stopStageAnimation()
       setError(e instanceof Error ? e.message : 'AI 분석에 실패했습니다.')
     }
-  }, [apiKey, model, frames, personas, onComplete])
+  }, [abConfig, apiKey, frames, model, personas, testMode, variants, onComplete])
 
   useEffect(() => {
     cancelledRef.current = false
-    run()
+    const startTimer = setTimeout(() => {
+      void run()
+    }, 0)
     return () => {
       cancelledRef.current = true
+      clearTimeout(startTimer)
       stopStageAnimation()
     }
   }, [run])
@@ -250,14 +281,26 @@ export default function RunningStep({
               분석 대상 화면
             </p>
             <div className="flex items-center gap-2">
-              <span className="text-2xl font-bold text-blue-600">{frames.length}</span>
+              <span className="text-2xl font-bold text-blue-600">
+                {testMode === 'ab'
+                  ? variants.reduce((sum, variant) => sum + variant.frames.length, 0)
+                  : frames.length}
+              </span>
               <span className="text-xs text-gray-500">개 프레임</span>
             </div>
+            {testMode === 'ab' && (
+              <p className="text-xs text-gray-400 mt-1">
+                A안 {variants.find((variant) => variant.id === 'A')?.frames.length ?? 0}개 · B안{' '}
+                {variants.find((variant) => variant.id === 'B')?.frames.length ?? 0}개
+              </p>
+            )}
           </div>
         </div>
 
         <p className="text-xs text-gray-400 text-center">
-          Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다
+          {testMode === 'ab'
+            ? 'Gemini가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
+            : 'Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
         </p>
       </div>
     </div>

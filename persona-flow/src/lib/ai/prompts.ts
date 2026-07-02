@@ -3,7 +3,7 @@
  * PersonaFlow는 "AI 페르소나가 시안을 직접 사용해보며 UX 피드백을 주는" 도구다.
  */
 
-import type { PersonaConfig } from '@/types'
+import type { ABTestConfig, DesignVariant, PersonaConfig } from '@/types'
 
 /** 6축 UX 평가 기준 (점수는 모든 분석에서 이 6개 축으로 통일) */
 export const AXES: { axis: number; label: string; icon: string }[] = [
@@ -98,6 +98,78 @@ ${AXES_TEXT}
    - completionRate(0~100), avgClicks(소수 가능), errorRate(0~100), dropoffPoint(주요 이탈 지점 문구)
 
 5. **overallSummary**: 3~5문장의 종합 총평 (점수 근거 + 우선 개선 항목).
+
+모든 텍스트는 한국어로, 반드시 지정된 JSON 스키마로만 응답하세요.`
+}
+
+/* ── 2-1) 화면 A/B 테스트 분석 ── */
+
+export function abAnalysisPrompt(
+  personas: PersonaConfig[],
+  variants: DesignVariant[],
+  config: ABTestConfig
+): string {
+  const personaText = personas
+    .map(
+      (p, i) =>
+        `[${i + 1}] ${p.name} (${p.role}) · 디지털:${DIGITAL_LABEL[p.digitalLevel] ?? p.digitalLevel} · 기기:${
+          DEVICE_LABEL[p.device] ?? p.device
+        } · 목표:"${p.goal}" · 맥락:"${p.context}"`
+    )
+    .join('\n')
+
+  const variantText = variants
+    .map((variant) => {
+      const frameText = variant.frames
+        .map((frame, i) => `  - ${variant.id}#${i + 1} | ID: ${frame.id} | 이름: ${frame.name}`)
+        .join('\n')
+      return `${variant.name} (${variant.id}안)\n${frameText}`
+    })
+    .join('\n\n')
+
+  return `당신은 UX 리서처이자 실험 설계자입니다. 아래 A안/B안 화면 이미지를 같은 페르소나 기준으로 비교 평가하세요.
+이 테스트는 실제 트래픽 실험이 아니라, AI 페르소나가 두 시안을 모두 사용해보는 가상 A/B 테스트입니다.
+
+## 테스트 목적
+${config.goal || '두 화면안 중 사용자 이해와 전환 가능성이 더 높은 안을 찾기'}
+
+## A/B 가설
+${config.hypothesis || '두 화면안의 정보 구조, 카피, CTA 차이가 사용자의 이해와 행동에 영향을 줄 것이다.'}
+
+## 비교 기준
+${config.criteria.length > 0 ? config.criteria.map((item) => `- ${item}`).join('\n') : '- 첫인상\n- 이해도\n- 전환 유도'}
+
+## 비교 대상 화면
+${variantText}
+
+## 테스트 페르소나
+${personaText}
+
+## 수행할 작업
+1. **walkthrough**: 각 페르소나가 A안과 B안을 사용해보는 과정을 단계별로 시뮬레이션하세요.
+   - frameId는 반드시 위 화면 ID 중 하나를 사용하세요.
+   - action/thought/emotion을 포함하세요.
+   - emotion: "positive" | "neutral" | "confused" | "frustrated"
+
+2. **axisScores**: A/B 전체를 종합한 최종 추천 관점의 6축 점수를 0~100점으로 평가하세요. (반드시 아래 6개 축, 이 순서)
+${AXES_TEXT}
+
+3. **findings**: A안/B안/공통 문제를 합쳐 5~10개 도출하세요.
+   - problem에는 "A안:", "B안:", "공통:" 중 어느 범위의 문제인지 명시하세요.
+   - frameId는 관련 화면 ID를 넣으세요.
+
+4. **taskMetrics**: 추천안 기준의 전체 추정 지표를 작성하세요.
+
+5. **overallSummary**: A/B 테스트의 종합 총평을 3~5문장으로 작성하세요.
+
+6. **abComparison**:
+   - winner: "A" | "B" | "tie"
+   - confidence: 0~100, 승자 판단 확신도
+   - summary: 왜 그 안이 우세한지 요약
+   - recommendation: 실제 적용 권고안. 필요하면 "A안 구조 + B안 CTA"처럼 합성 제안
+   - keyInsights: 핵심 비교 인사이트 3~5개
+   - variantScores: A안과 B안 각각의 6축 점수, taskMetrics, strengths, weaknesses
+   - personaPreferences: 각 페르소나가 선호한 안과 이유
 
 모든 텍스트는 한국어로, 반드시 지정된 JSON 스키마로만 응답하세요.`
 }

@@ -1,5 +1,13 @@
-import { useRef, useState } from 'react'
-import { Send, Download, FileJson, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { useState } from 'react'
+import {
+  Send,
+  Download,
+  FileJson,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  GitCompare,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
@@ -9,6 +17,8 @@ import type {
   Finding,
   SeverityLevel,
   WalkEmotion,
+  ChatMessage,
+  FeedbackThread,
 } from '@/types'
 
 interface ReportPageProps {
@@ -17,6 +27,7 @@ interface ReportPageProps {
   apiKey: string
   model: string
   onRequireKey: () => void
+  onFeedbackThreadsChange: (threads: FeedbackThread[]) => void
 }
 
 /* ── 유틸 ── */
@@ -163,6 +174,158 @@ function SummaryTab({ report }: { report: TestReport }) {
   )
 }
 
+function ABComparisonTab({ report }: { report: TestReport }) {
+  const comparison = report.abComparison
+
+  if (!comparison) {
+    return (
+      <div className="text-center py-12 text-gray-400">
+        <p className="text-sm">A/B 비교 데이터가 없습니다.</p>
+      </div>
+    )
+  }
+
+  const winnerLabel =
+    comparison.winner === 'tie' ? '상황별 우세' : `${comparison.winner}안 우세`
+
+  return (
+    <div className="space-y-5">
+      <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <GitCompare className="w-4 h-4 text-blue-600" />
+            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+              A/B 테스트 결과
+            </h3>
+          </div>
+          <span className="text-xs px-2 py-0.5 rounded font-semibold bg-slate-900 text-white">
+            {winnerLabel}
+          </span>
+        </div>
+        <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-4">
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-1">종합 판단</p>
+              <p className="text-sm text-gray-800 leading-relaxed">{comparison.summary}</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-green-700 mb-1">적용 권고</p>
+              <p className="text-sm text-gray-700 bg-green-50 border border-green-200 rounded px-3 py-2 leading-relaxed">
+                {comparison.recommendation}
+              </p>
+            </div>
+          </div>
+          <div className="border border-gray-200 rounded-md p-3 bg-gray-50">
+            <p className="text-xs font-semibold text-gray-500 mb-2">확신도</p>
+            <div className="flex items-end gap-2 mb-2">
+              <span className="text-3xl font-bold text-blue-600">{comparison.confidence}</span>
+              <span className="text-xs text-gray-500 pb-1">/ 100</span>
+            </div>
+            <Progress value={comparison.confidence} className="h-2" />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {comparison.variantScores.map((variant) => (
+          <div
+            key={variant.variantId}
+            className="border border-gray-200 rounded-md bg-white overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-900">{variant.variantId}안</h3>
+              <span className="text-xs text-gray-500">
+                완료율 {variant.taskMetrics.completionRate}% · 오류율 {variant.taskMetrics.errorRate}%
+              </span>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="space-y-2">
+                {variant.axisScores.map((axis) => (
+                  <div key={axis.axis} className="grid grid-cols-[1fr_2fr_2rem] gap-3 items-center">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-sm">{axis.icon}</span>
+                      <span className="text-xs text-gray-600 truncate">{axis.label}</span>
+                    </div>
+                    <Progress value={axis.score} className={`h-1.5 ${scoreBarColor(axis.score)}`} />
+                    <span className={`text-xs font-bold text-right ${scoreColor(axis.score)}`}>
+                      {axis.score}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs font-semibold text-green-700 mb-1">강점</p>
+                  <ul className="space-y-1">
+                    {variant.strengths.map((item) => (
+                      <li key={item} className="text-xs text-gray-600 leading-relaxed">
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-red-700 mb-1">약점</p>
+                  <ul className="space-y-1">
+                    {variant.weaknesses.map((item) => (
+                      <li key={item} className="text-xs text-gray-600 leading-relaxed">
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100">
+            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+              핵심 인사이트
+            </h3>
+          </div>
+          <div className="p-4 space-y-2">
+            {comparison.keyInsights.map((insight) => (
+              <p key={insight} className="text-sm text-gray-700 leading-relaxed">
+                {insight}
+              </p>
+            ))}
+          </div>
+        </div>
+
+        <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100">
+            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+              페르소나별 선호
+            </h3>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {comparison.personaPreferences.map((preference) => (
+              <div key={`${preference.personaName}-${preference.preferredVariant}`} className="px-4 py-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-semibold text-gray-900">
+                    {preference.personaName}
+                  </span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">
+                    {preference.preferredVariant === 'tie'
+                      ? '상황별'
+                      : `${preference.preferredVariant}안`}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-600 leading-relaxed">{preference.reason}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ── 탭2 발견된 문제 ── */
 type FilterType = 'all' | SeverityLevel
 
@@ -282,11 +445,52 @@ function FindingsTab({ findings }: { findings: Finding[] }) {
 }
 
 /* ── 탭3 인라인 채팅 ── */
-interface ChatMessage {
-  id: string
-  role: 'user' | 'persona'
-  content: string
-  timestamp: Date
+type ChatMap = Record<string, ChatMessage[]>
+
+const THREAD_SEPARATOR = '::'
+
+function getThreadKey(frameId: string, personaId: string) {
+  return `${frameId}${THREAD_SEPARATOR}${personaId}`
+}
+
+function chatMapFromThreads(threads: FeedbackThread[] = []): ChatMap {
+  return threads.reduce<ChatMap>((acc, thread) => {
+    acc[getThreadKey(thread.frameId, thread.personaId)] = thread.messages
+    return acc
+  }, {})
+}
+
+function chatThreadsFromMap(chatMap: ChatMap): FeedbackThread[] {
+  return Object.entries(chatMap)
+    .filter(([, messages]) => messages.length > 0)
+    .map(([key, messages]) => {
+      const [frameId, personaId] = key.split(THREAD_SEPARATOR)
+      const latestMessage = messages[messages.length - 1]
+      return {
+        id: key,
+        frameId,
+        personaId,
+        messages,
+        updatedAt: latestMessage?.timestamp ?? new Date(),
+      }
+    })
+    .filter((thread) => Boolean(thread.frameId && thread.personaId))
+}
+
+function appendChatMessage(chatMap: ChatMap, chatKey: string, message: ChatMessage): ChatMap {
+  return {
+    ...chatMap,
+    [chatKey]: [...(chatMap[chatKey] ?? []), message],
+  }
+}
+
+function createChatMessage(role: ChatMessage['role'], content: string): ChatMessage {
+  return {
+    id: `msg-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`,
+    role,
+    content,
+    timestamp: new Date(),
+  }
 }
 
 const QUICK_QUESTIONS = [
@@ -300,11 +504,13 @@ function InlineChatTab({
   apiKey,
   model,
   onRequireKey,
+  onFeedbackThreadsChange,
 }: {
   report: TestReport
   apiKey: string
   model: string
   onRequireKey: () => void
+  onFeedbackThreadsChange: (threads: FeedbackThread[]) => void
 }) {
   const frames =
     report.frames.length > 0
@@ -317,14 +523,14 @@ function InlineChatTab({
 
   const [selectedFrameId, setSelectedFrameId] = useState(frames[0]?.id ?? '')
   const [selectedPersonaId, setSelectedPersonaId] = useState(report.personas[0]?.id ?? '')
-  const [chatMap, setChatMap] = useState<Record<string, ChatMessage[]>>({})
+  const [chatMap, setChatMap] = useState<ChatMap>(() =>
+    chatMapFromThreads(report.feedbackThreads)
+  )
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const chatMapRef = useRef(chatMap)
-  chatMapRef.current = chatMap
 
-  const chatKey = `${selectedFrameId}::${selectedPersonaId}`
+  const chatKey = getThreadKey(selectedFrameId, selectedPersonaId)
   const messages: ChatMessage[] = chatMap[chatKey] ?? []
   const currentPersona = report.personas.find((p) => p.id === selectedPersonaId) ?? report.personas[0]
 
@@ -337,19 +543,13 @@ function InlineChatTab({
     if (!currentPersona) return
 
     setError(null)
-    const history = chatMapRef.current[chatKey] ?? []
+    const history = chatMap[chatKey] ?? []
 
-    const userMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: text.trim(),
-      timestamp: new Date(),
-    }
+    const userMsg = createChatMessage('user', text.trim())
+    const nextWithUser = appendChatMessage(chatMap, chatKey, userMsg)
 
-    setChatMap((prev) => ({
-      ...prev,
-      [chatKey]: [...(prev[chatKey] ?? []), userMsg],
-    }))
+    setChatMap(nextWithUser)
+    onFeedbackThreadsChange(chatThreadsFromMap(nextWithUser))
     setInput('')
     setIsTyping(true)
 
@@ -364,16 +564,10 @@ function InlineChatTab({
         history,
         text.trim()
       )
-      const personaMsg: ChatMessage = {
-        id: `msg-${Date.now() + 1}`,
-        role: 'persona',
-        content: response,
-        timestamp: new Date(),
-      }
-      setChatMap((prev) => ({
-        ...prev,
-        [chatKey]: [...(prev[chatKey] ?? []), personaMsg],
-      }))
+      const personaMsg = createChatMessage('persona', response)
+      const nextWithPersona = appendChatMessage(nextWithUser, chatKey, personaMsg)
+      setChatMap(nextWithPersona)
+      onFeedbackThreadsChange(chatThreadsFromMap(nextWithPersona))
     } catch (e) {
       setError(e instanceof Error ? e.message : '응답 생성에 실패했습니다.')
     } finally {
@@ -618,15 +812,31 @@ function WalkthroughTab({ report }: { report: TestReport }) {
 }
 
 /* ── 탭 타입 ── */
-type ReportTab = 'summary' | 'findings' | 'walkthrough' | 'chat'
+type ReportTab = 'summary' | 'ab' | 'findings' | 'walkthrough' | 'chat'
 
 function downloadJson(report: TestReport) {
-  const { id, projectName, createdAt, personas, axisScores, findings, taskMetrics, overallSummary, walkthrough } =
+  const {
+    id,
+    projectName,
+    createdAt,
+    testMode,
+    personas,
+    variants,
+    abConfig,
+    abComparison,
+    axisScores,
+    findings,
+    taskMetrics,
+    overallSummary,
+    walkthrough,
+    feedbackThreads,
+  } =
     report
   const payload = {
     id,
     projectName,
     createdAt,
+    testMode,
     personas: personas.map(({ id, name, role, digitalLevel, goal, device, context }) => ({
       id,
       name,
@@ -636,11 +846,15 @@ function downloadJson(report: TestReport) {
       device,
       context,
     })),
+    variants,
+    abConfig,
+    abComparison,
     axisScores,
     findings,
     taskMetrics,
     overallSummary,
     walkthrough,
+    feedbackThreads,
   }
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
@@ -658,6 +872,7 @@ export default function ReportPage({
   apiKey,
   model,
   onRequireKey,
+  onFeedbackThreadsChange,
 }: ReportPageProps) {
   const [activeTab, setActiveTab] = useState<ReportTab>('summary')
 
@@ -674,6 +889,7 @@ export default function ReportPage({
 
   const tabs: { key: ReportTab; label: string }[] = [
     { key: 'summary', label: '요약' },
+    ...(report.abComparison ? [{ key: 'ab' as const, label: 'A/B 비교' }] : []),
     { key: 'findings', label: `발견된 문제 (${findingsCount})` },
     { key: 'walkthrough', label: `클릭 시뮬레이션 (${walkCount})` },
     { key: 'chat', label: '인라인 채팅' },
@@ -735,6 +951,7 @@ export default function ReportPage({
       {/* 탭 컨텐츠 */}
       <div className="flex-1 overflow-auto px-8 py-6">
         {activeTab === 'summary' && <SummaryTab report={report} />}
+        {activeTab === 'ab' && <ABComparisonTab report={report} />}
         {activeTab === 'findings' && <FindingsTab findings={report.findings} />}
         {activeTab === 'walkthrough' && <WalkthroughTab report={report} />}
         {activeTab === 'chat' && (
@@ -743,6 +960,7 @@ export default function ReportPage({
             apiKey={apiKey}
             model={model}
             onRequireKey={onRequireKey}
+            onFeedbackThreadsChange={onFeedbackThreadsChange}
           />
         )}
       </div>

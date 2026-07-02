@@ -1,13 +1,23 @@
-import { useEffect, useState } from 'react'
-import { Check, RotateCcw } from 'lucide-react'
+import { useState } from 'react'
+import { Check, History, RotateCcw } from 'lucide-react'
 import UploadStep from './pages/UploadStep'
 import PersonaStep from './pages/PersonaStep'
 import RunningStep from './pages/RunningStep'
 import ReportPage from './pages/ReportPage'
 import ApiKeyModal from './components/ApiKeyModal'
 import { useApiKey } from './hooks/useApiKey'
+import { getTestHistory, saveTestReport, updateTestReportFeedback } from './lib/history'
+import { imageToBase64 } from './lib/image'
 import { MODEL_OPTIONS } from './lib/ai/keyStore'
-import type { Frame, PersonaConfig, TestReport } from './types'
+import type {
+  ABTestConfig,
+  DesignVariant,
+  FeedbackThread,
+  Frame,
+  PersonaConfig,
+  TestMode,
+  TestReport,
+} from './types'
 
 type TestStep = 'upload' | 'persona' | 'running' | 'report'
 
@@ -27,18 +37,39 @@ const BREADCRUMB: Record<TestStep, string> = {
   report: '결과 / 리포트 확인',
 }
 
+function createDefaultABConfig(): ABTestConfig {
+  return {
+    goal: '',
+    hypothesis: '',
+    criteria: ['첫인상', '이해도', '전환 유도'],
+  }
+}
+
+function createDefaultVariants(): DesignVariant[] {
+  return [
+    { id: 'A', name: 'A안', frames: [] },
+    { id: 'B', name: 'B안', frames: [] },
+  ]
+}
+
 function Sidebar({
   step,
   onReset,
   hasKey,
   model,
   onOpenKey,
+  history,
+  currentReportId,
+  onOpenReport,
 }: {
   step: TestStep
   onReset: () => void
   hasKey: boolean
   model: string
   onOpenKey: () => void
+  history: TestReport[]
+  currentReportId?: string
+  onOpenReport: (report: TestReport) => void
 }) {
   const currentIndex = STEP_ORDER.indexOf(step)
   const modelLabel = MODEL_OPTIONS.find((m) => m.id === model)?.label ?? model
@@ -125,6 +156,56 @@ function Sidebar({
             )
           })}
         </ul>
+
+        <div className="mt-7">
+          <div className="flex items-center gap-2 mb-3 px-1">
+            <History className="w-3.5 h-3.5 text-slate-500" />
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              테스트 히스토리
+            </p>
+          </div>
+          {history.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-slate-600">저장된 테스트 없음</p>
+          ) : (
+            <ul className="space-y-1">
+              {history.slice(0, 6).map((item) => {
+                const isActive = step === 'report' && currentReportId === item.id
+                const feedbackCount =
+                  item.feedbackThreads?.reduce(
+                    (count, thread) => count + thread.messages.length,
+                    0
+                  ) ?? 0
+                const createdAt = new Intl.DateTimeFormat('ko-KR', {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }).format(item.createdAt)
+
+                return (
+                  <li key={item.id}>
+                    <button
+                      onClick={() => onOpenReport(item)}
+                      className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                        isActive
+                          ? 'bg-slate-800 text-white'
+                          : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <span className="block truncate text-xs font-medium">
+                        {item.projectName}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10px] text-slate-500">
+                        {item.testMode === 'ab' ? 'A/B · ' : ''}
+                        {createdAt} · 피드백 {feedbackCount}개
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
       </nav>
 
       {/* API 키 상태 */}
@@ -156,24 +237,68 @@ function Sidebar({
   )
 }
 
+async function prepareFrameForHistory(frame: Frame): Promise<Frame> {
+  if (frame.imageUrl.startsWith('data:')) {
+    return {
+      id: frame.id,
+      name: frame.name,
+      imageUrl: frame.imageUrl,
+    }
+  }
+
+  try {
+    const image = await imageToBase64(frame.file ?? frame.imageUrl, 960, 0.78)
+    return {
+      id: frame.id,
+      name: frame.name,
+      imageUrl: `data:${image.mimeType};base64,${image.data}`,
+    }
+  } catch {
+    return {
+      id: frame.id,
+      name: frame.name,
+      imageUrl: frame.imageUrl,
+    }
+  }
+}
+
+async function prepareReportForHistory(report: TestReport): Promise<TestReport> {
+  const frames = await Promise.all(report.frames.map(prepareFrameForHistory))
+  const variants = report.variants
+    ? await Promise.all(
+        report.variants.map(async (variant) => ({
+          ...variant,
+          frames: await Promise.all(variant.frames.map(prepareFrameForHistory)),
+        }))
+      )
+    : undefined
+
+  return {
+    ...report,
+    frames,
+    variants,
+  }
+}
+
 function App() {
   const [step, setStep] = useState<TestStep>('upload')
+  const [testMode, setTestMode] = useState<TestMode>('single')
   const [frames, setFrames] = useState<Frame[]>([])
+  const [variants, setVariants] = useState<DesignVariant[]>(() => createDefaultVariants())
+  const [abConfig, setAbConfig] = useState<ABTestConfig>(() => createDefaultABConfig())
   const [personas, setPersonas] = useState<PersonaConfig[]>([])
   const [report, setReport] = useState<TestReport | null>(null)
+  const [history, setHistory] = useState<TestReport[]>(() => getTestHistory())
 
   const { apiKey, model, hasKey, setApiKey, clearApiKey, setModel } = useApiKey()
-  const [keyModalOpen, setKeyModalOpen] = useState(false)
-
-  // 키가 없으면 최초 진입 시 모달 자동 표시
-  useEffect(() => {
-    if (!hasKey) setKeyModalOpen(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const [keyModalOpen, setKeyModalOpen] = useState(() => !hasKey)
 
   const resetAll = () => {
     setStep('upload')
+    setTestMode('single')
     setFrames([])
+    setVariants(createDefaultVariants())
+    setAbConfig(createDefaultABConfig())
     setPersonas([])
     setReport(null)
   }
@@ -184,7 +309,48 @@ function App() {
 
   const handleAnalysisComplete = (r: TestReport) => {
     setReport(r)
+    setHistory(saveTestReport(r))
     setStep('report')
+
+    void prepareReportForHistory(r).then((preparedReport) => {
+      const savedReport = getTestHistory().find((item) => item.id === preparedReport.id)
+      setHistory(
+        saveTestReport({
+          ...preparedReport,
+          feedbackThreads: savedReport?.feedbackThreads ?? preparedReport.feedbackThreads,
+        })
+      )
+    })
+  }
+
+  const handleOpenReport = (savedReport: TestReport) => {
+    const mode = savedReport.testMode ?? 'single'
+    setTestMode(mode)
+    setFrames(savedReport.frames)
+    setVariants(savedReport.variants ?? createDefaultVariants())
+    setAbConfig(savedReport.abConfig ?? createDefaultABConfig())
+    setPersonas(savedReport.personas)
+    setReport(savedReport)
+    setStep('report')
+  }
+
+  const handleFeedbackThreadsChange = (threads: FeedbackThread[]) => {
+    if (!report) return
+
+    const nextReport: TestReport = {
+      ...report,
+      feedbackThreads: threads,
+    }
+
+    setReport(nextReport)
+
+    const updated = updateTestReportFeedback(nextReport.id, threads)
+    if (updated.found) {
+      setHistory(updated.reports)
+      return
+    }
+
+    setHistory(saveTestReport(nextReport))
   }
 
   const handleSaveKey = (key: string, m: string) => {
@@ -198,6 +364,9 @@ function App() {
     setKeyModalOpen(true)
   }
 
+  const activeFrames =
+    testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
+
   return (
     <div className="min-h-screen flex">
       <Sidebar
@@ -206,6 +375,9 @@ function App() {
         hasKey={hasKey}
         model={model}
         onOpenKey={() => setKeyModalOpen(true)}
+        history={history}
+        currentReportId={report?.id}
+        onOpenReport={handleOpenReport}
       />
 
       {/* 메인 영역 */}
@@ -223,6 +395,12 @@ function App() {
             <UploadStep
               frames={frames}
               onFramesChange={setFrames}
+              testMode={testMode}
+              onTestModeChange={setTestMode}
+              variants={variants}
+              onVariantsChange={setVariants}
+              abConfig={abConfig}
+              onAbConfigChange={setAbConfig}
               onNext={handleUploadNext}
             />
           )}
@@ -232,7 +410,7 @@ function App() {
               onPersonasChange={setPersonas}
               onNext={handlePersonaNext}
               onBack={handlePersonaBack}
-              frames={frames}
+              frames={activeFrames}
               apiKey={apiKey}
               model={model}
               onRequireKey={() => setKeyModalOpen(true)}
@@ -242,6 +420,9 @@ function App() {
             <RunningStep
               personas={personas}
               frames={frames}
+              testMode={testMode}
+              variants={variants}
+              abConfig={abConfig}
               apiKey={apiKey}
               model={model}
               onComplete={handleAnalysisComplete}
@@ -251,11 +432,13 @@ function App() {
           )}
           {step === 'report' && report && (
             <ReportPage
+              key={report.id}
               report={report}
               onNewTest={resetAll}
               apiKey={apiKey}
               model={model}
               onRequireKey={() => setKeyModalOpen(true)}
+              onFeedbackThreadsChange={handleFeedbackThreadsChange}
             />
           )}
         </main>

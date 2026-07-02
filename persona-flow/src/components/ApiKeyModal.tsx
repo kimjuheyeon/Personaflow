@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { X, Check, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,15 +40,6 @@ export default function ApiKeyModal({
   const [testState, setTestState] = useState<TestState>('idle')
   const [errorMsg, setErrorMsg] = useState('')
 
-  useEffect(() => {
-    if (open) {
-      setKey(initialKey)
-      setModel(currentModel)
-      setTestState('idle')
-      setErrorMsg('')
-    }
-  }, [open, initialKey, currentModel])
-
   if (!open) return null
 
   const handleTest = async () => {
@@ -67,6 +58,13 @@ export default function ApiKeyModal({
   const handleSave = () => {
     if (!key.trim()) return
     onSave(key.trim(), model)
+  }
+
+  const handleClear = () => {
+    setKey('')
+    setTestState('idle')
+    setErrorMsg('')
+    onClear?.()
   }
 
   return (
@@ -161,7 +159,7 @@ export default function ApiKeyModal({
           <div>
             {initialKey && onClear && (
               <button
-                onClick={onClear}
+                onClick={handleClear}
                 className="text-xs text-gray-400 hover:text-red-500 transition-colors"
               >
                 키 삭제

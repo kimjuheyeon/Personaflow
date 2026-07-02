@@ -4,18 +4,23 @@
  */
 
 import type {
+  ABComparison,
+  ABTestConfig,
+  DesignVariant,
   PersonaConfig,
   AxisScore,
   Finding,
   TaskMetrics,
   WalkStep,
   ChatMessage,
+  VariantId,
 } from '@/types'
 import { imageToBase64 } from '@/lib/image'
 import {
   AXES,
   personaSuggestionPrompt,
   analysisPrompt,
+  abAnalysisPrompt,
   chatSystemPrompt,
 } from './prompts'
 
@@ -124,6 +129,22 @@ async function buildFrameParts(frames: FrameInput[]): Promise<Part[]> {
   return parts
 }
 
+async function buildVariantParts(variants: DesignVariant[]): Promise<Part[]> {
+  const parts: Part[] = []
+  for (const variant of variants) {
+    parts.push({ text: `■ ${variant.name} (${variant.id}안)` })
+    for (let i = 0; i < variant.frames.length; i++) {
+      const frame = variant.frames[i]
+      const img = await imageToBase64(frame.file ?? frame.imageUrl)
+      parts.push({
+        text: `■ ${variant.id}안 화면 #${i + 1} | ID: ${frame.id} | 이름: ${frame.name}`,
+      })
+      parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
+    }
+  }
+  return parts
+}
+
 /* ── 0) 키 검증 ── */
 
 export async function testApiKey(apiKey: string, model: string): Promise<void> {
@@ -214,6 +235,7 @@ export interface AnalysisResult {
   taskMetrics: TaskMetrics
   overallSummary: string
   walkthrough: WalkStep[]
+  abComparison?: ABComparison
 }
 
 const analysisSchema = {
@@ -297,12 +319,161 @@ const analysisSchema = {
   ],
 }
 
+const variantScoresSchema = {
+  type: 'ARRAY',
+  items: {
+    type: 'OBJECT',
+    properties: {
+      variantId: { type: 'STRING', enum: ['A', 'B'] },
+      axisScores: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            axis: { type: 'INTEGER' },
+            label: { type: 'STRING' },
+            score: { type: 'INTEGER' },
+          },
+          required: ['axis', 'label', 'score'],
+        },
+      },
+      taskMetrics: {
+        type: 'OBJECT',
+        properties: {
+          completionRate: { type: 'INTEGER' },
+          avgClicks: { type: 'NUMBER' },
+          errorRate: { type: 'INTEGER' },
+          dropoffPoint: { type: 'STRING' },
+        },
+        required: ['completionRate', 'avgClicks', 'errorRate', 'dropoffPoint'],
+      },
+      strengths: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+      weaknesses: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+    },
+    required: ['variantId', 'axisScores', 'taskMetrics', 'strengths', 'weaknesses'],
+  },
+}
+
+const abAnalysisSchema = {
+  ...analysisSchema,
+  properties: {
+    ...analysisSchema.properties,
+    abComparison: {
+      type: 'OBJECT',
+      properties: {
+        winner: { type: 'STRING', enum: ['A', 'B', 'tie'] },
+        confidence: { type: 'INTEGER' },
+        summary: { type: 'STRING' },
+        recommendation: { type: 'STRING' },
+        keyInsights: {
+          type: 'ARRAY',
+          items: { type: 'STRING' },
+        },
+        variantScores: variantScoresSchema,
+        personaPreferences: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              personaId: { type: 'STRING' },
+              personaName: { type: 'STRING' },
+              preferredVariant: { type: 'STRING', enum: ['A', 'B', 'tie'] },
+              reason: { type: 'STRING' },
+            },
+            required: ['personaName', 'preferredVariant', 'reason'],
+          },
+        },
+      },
+      required: [
+        'winner',
+        'confidence',
+        'summary',
+        'recommendation',
+        'keyInsights',
+        'variantScores',
+        'personaPreferences',
+      ],
+    },
+  },
+  required: [...analysisSchema.required, 'abComparison'],
+}
+
 interface RawAnalysis {
   walkthrough: WalkStep[]
   axisScores: { axis: number; label: string; score: number }[]
   findings: Omit<Finding, 'id'>[]
   taskMetrics: TaskMetrics
   overallSummary: string
+  abComparison?: RawABComparison
+}
+
+interface RawABComparison {
+  winner: VariantId | 'tie'
+  confidence: number
+  summary: string
+  recommendation: string
+  keyInsights: string[]
+  variantScores: {
+    variantId: VariantId
+    axisScores: { axis: number; label: string; score: number }[]
+    taskMetrics: TaskMetrics
+    strengths: string[]
+    weaknesses: string[]
+  }[]
+  personaPreferences: {
+    personaId?: string
+    personaName: string
+    preferredVariant: VariantId | 'tie'
+    reason: string
+  }[]
+}
+
+function normalizeAxisScores(
+  rawScores: { axis: number; label: string; score: number }[] = []
+): AxisScore[] {
+  const iconByAxis = new Map(AXES.map((a) => [a.axis, a.icon]))
+  return rawScores.map((score) => ({
+    axis: score.axis,
+    label: score.label,
+    score: Math.max(0, Math.min(100, Math.round(score.score))),
+    icon: iconByAxis.get(score.axis) ?? '📊',
+  }))
+}
+
+function normalizeVariantId(value: string | undefined): VariantId | 'tie' {
+  if (value === 'A' || value === 'B' || value === 'tie') return value
+  return 'tie'
+}
+
+function normalizeABComparison(raw: RawABComparison | undefined): ABComparison | undefined {
+  if (!raw) return undefined
+
+  return {
+    winner: normalizeVariantId(raw.winner),
+    confidence: Math.max(0, Math.min(100, Math.round(raw.confidence ?? 0))),
+    summary: raw.summary ?? '',
+    recommendation: raw.recommendation ?? '',
+    keyInsights: raw.keyInsights ?? [],
+    variantScores: (raw.variantScores ?? []).map((variant) => ({
+      variantId: normalizeVariantId(variant.variantId) === 'B' ? 'B' : 'A',
+      axisScores: normalizeAxisScores(variant.axisScores),
+      taskMetrics: variant.taskMetrics,
+      strengths: variant.strengths ?? [],
+      weaknesses: variant.weaknesses ?? [],
+    })),
+    personaPreferences: (raw.personaPreferences ?? []).map((preference) => ({
+      personaId: preference.personaId,
+      personaName: preference.personaName,
+      preferredVariant: normalizeVariantId(preference.preferredVariant),
+      reason: preference.reason,
+    })),
+  }
 }
 
 export async function analyzeDesign(
@@ -335,14 +506,7 @@ export async function analyzeDesign(
 
   const raw = parseJson<RawAnalysis>(text)
 
-  // 아이콘은 고정 6축 정의에서 채워 일관성 유지
-  const iconByAxis = new Map(AXES.map((a) => [a.axis, a.icon]))
-  const axisScores: AxisScore[] = (raw.axisScores ?? []).map((a) => ({
-    axis: a.axis,
-    label: a.label,
-    score: Math.max(0, Math.min(100, Math.round(a.score))),
-    icon: iconByAxis.get(a.axis) ?? '📊',
-  }))
+  const axisScores = normalizeAxisScores(raw.axisScores)
 
   const findings: Finding[] = (raw.findings ?? []).map((f, i) => ({
     id: `f-${i + 1}`,
@@ -355,6 +519,48 @@ export async function analyzeDesign(
     taskMetrics: raw.taskMetrics,
     overallSummary: raw.overallSummary,
     walkthrough: raw.walkthrough ?? [],
+  }
+}
+
+export async function analyzeABDesign(
+  apiKey: string,
+  model: string,
+  variants: DesignVariant[],
+  personas: PersonaConfig[],
+  abConfig: ABTestConfig
+): Promise<AnalysisResult> {
+  const variantParts = await buildVariantParts(variants)
+  const text = await generateContent({
+    apiKey,
+    model,
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          ...variantParts,
+          {
+            text: abAnalysisPrompt(personas, variants, abConfig),
+          },
+        ],
+      },
+    ],
+    responseSchema: abAnalysisSchema,
+    temperature: 0.6,
+  })
+
+  const raw = parseJson<RawAnalysis>(text)
+  const findings: Finding[] = (raw.findings ?? []).map((finding, index) => ({
+    id: `f-${index + 1}`,
+    ...finding,
+  }))
+
+  return {
+    axisScores: normalizeAxisScores(raw.axisScores),
+    findings,
+    taskMetrics: raw.taskMetrics,
+    overallSummary: raw.overallSummary,
+    walkthrough: raw.walkthrough ?? [],
+    abComparison: normalizeABComparison(raw.abComparison),
   }
 }
 
