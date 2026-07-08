@@ -4,6 +4,8 @@ const FIGMA_API_BASE = 'https://api.figma.com/v1'
 const RENDERABLE_TYPES = new Set(['FRAME', 'COMPONENT', 'INSTANCE'])
 const MAX_IMPORTED_FRAMES = 24
 
+class FigmaProxyUnavailableError extends Error {}
+
 interface FigmaNode {
   id: string
   name: string
@@ -39,7 +41,25 @@ function figmaHeaders(token: string): HeadersInit {
   }
 }
 
-async function fetchFigmaJson<T>(path: string, token: string): Promise<T> {
+async function buildFigmaError(response: Response): Promise<Error> {
+  let detail: string | undefined
+  try {
+    const data = await response.json()
+    detail = data?.error?.message ?? data?.error ?? data?.message ?? data?.err
+  } catch {
+    /* ignore */
+  }
+
+  if (response.status === 403 || response.status === 401) {
+    return new Error('Figma 개인 액세스 토큰이 올바르지 않거나 파일 접근 권한이 없습니다.')
+  }
+  if (response.status === 404) {
+    return new Error('Figma 파일 또는 선택한 화면을 찾지 못했습니다.')
+  }
+  return new Error(detail ?? `Figma API 요청 실패 (HTTP ${response.status})`)
+}
+
+async function fetchFigmaJsonDirect<T>(path: string, token: string): Promise<T> {
   let response: Response
   try {
     response = await fetch(`${FIGMA_API_BASE}${path}`, {
@@ -50,16 +70,43 @@ async function fetchFigmaJson<T>(path: string, token: string): Promise<T> {
   }
 
   if (!response.ok) {
-    if (response.status === 403) {
-      throw new Error('Figma 개인 액세스 토큰이 올바르지 않거나 파일 접근 권한이 없습니다.')
-    }
-    if (response.status === 404) {
-      throw new Error('Figma 파일 또는 선택한 화면을 찾지 못했습니다.')
-    }
-    throw new Error(`Figma API 요청 실패 (HTTP ${response.status})`)
+    throw await buildFigmaError(response)
   }
 
   return response.json() as Promise<T>
+}
+
+async function fetchFigmaJsonViaProxy<T>(path: string, token: string): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(`/api/figma?path=${encodeURIComponent(path)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+  } catch {
+    throw new FigmaProxyUnavailableError('Figma proxy unavailable')
+  }
+
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) {
+    throw new FigmaProxyUnavailableError('Figma proxy unavailable')
+  }
+
+  if (!response.ok) {
+    throw await buildFigmaError(response)
+  }
+
+  return response.json() as Promise<T>
+}
+
+async function fetchFigmaJson<T>(path: string, token: string): Promise<T> {
+  try {
+    return await fetchFigmaJsonViaProxy<T>(path, token)
+  } catch (error) {
+    if (!(error instanceof FigmaProxyUnavailableError)) throw error
+    return fetchFigmaJsonDirect<T>(path, token)
+  }
 }
 
 function collectRenderableNodes(node: FigmaNode | null | undefined, limit = MAX_IMPORTED_FRAMES): FigmaNode[] {
