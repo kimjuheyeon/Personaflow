@@ -54,6 +54,10 @@ const EMPTY_FORM = {
   context: '처음 써보는 유저',
 }
 
+function hasFrameImage(frame: Frame): boolean {
+  return Boolean(frame.file || frame.imageUrl)
+}
+
 export default function PersonaStep({
   personas,
   onPersonasChange,
@@ -66,11 +70,16 @@ export default function PersonaStep({
   model,
   onRequireKey,
 }: PersonaStepProps) {
+  const initialDemoPersonas = suggestDemoPersonas(sourceType)
   const [activeTab, setActiveTab] = useState<'ai' | 'manual'>('ai')
-  const [aiPersonas, setAiPersonas] = useState<PersonaConfig[]>([])
+  const [aiPersonas, setAiPersonas] = useState<PersonaConfig[]>(
+    aiMode === 'demo' ? initialDemoPersonas : []
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    new Set((aiMode === 'demo' ? initialDemoPersonas : []).map((p) => p.id))
+  )
   const [form, setForm] = useState(EMPTY_FORM)
 
   const handleAiRecommend = async () => {
@@ -87,7 +96,13 @@ export default function PersonaStep({
       return
     }
     if (frames.length === 0) {
-      setError('먼저 시안을 업로드해주세요.')
+      setError('먼저 테스트할 화면을 연결하거나 업로드해주세요.')
+      return
+    }
+    if (!frames.some(hasFrameImage)) {
+      setError(
+        '실제 AI 페르소나 추천에는 화면 이미지가 필요합니다. Figma 개인 액세스 토큰으로 화면 이미지를 가져오거나 PNG/JPG 이미지를 업로드해주세요.'
+      )
       return
     }
     setLoading(true)
@@ -147,9 +162,10 @@ export default function PersonaStep({
     onNext()
   }
 
+  const selectedAiCount = aiPersonas.filter((persona) => selectedIds.has(persona.id)).length
   const totalSelected =
     activeTab === 'ai'
-      ? selectedIds.size + personas.filter((p) => !p.isAiGenerated).length
+      ? selectedAiCount + personas.filter((p) => !p.isAiGenerated).length
       : personas.length
 
   return (
@@ -186,14 +202,14 @@ export default function PersonaStep({
               <p className="text-sm text-gray-600 font-medium">AI가 최적의 페르소나를 추천합니다</p>
               <p className="text-xs text-gray-400">
                 {aiMode === 'demo'
-                  ? 'API 키 없이 기본 테스트 페르소나를 생성합니다'
-                  : '업로드한 시안을 Gemini가 분석해 사용자 유형을 제안합니다'}
+                  ? '샘플 테스트용 페르소나가 자동으로 준비됩니다'
+                  : '가져온 화면 이미지를 Gemini가 보고 사용자 유형을 제안합니다'}
               </p>
               {error && (
                 <p className="text-xs text-red-600 max-w-md mx-auto leading-relaxed px-4">{error}</p>
               )}
               <Button onClick={handleAiRecommend} size="sm">
-                {aiMode === 'demo' ? 'Demo 페르소나 불러오기' : 'AI 페르소나 추천받기'}
+                {aiMode === 'demo' ? '샘플 페르소나 다시 준비' : 'AI 페르소나 추천받기'}
               </Button>
             </div>
           )}
@@ -216,7 +232,7 @@ export default function PersonaStep({
                   onClick={handleAiRecommend}
                   className="text-xs text-blue-600 hover:text-blue-700 font-medium"
                 >
-                  {aiMode === 'demo' ? 'Demo 페르소나 다시 불러오기' : '다시 추천받기'}
+                  {aiMode === 'demo' ? '샘플 페르소나 다시 준비' : '다시 추천받기'}
                 </button>
               </div>
 

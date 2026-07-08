@@ -46,7 +46,7 @@ export function parseFigmaUrl(rawUrl: string): FigmaSource | null {
     nodeId,
     versionId,
     fileName: decodePathPart(parts[fileTypeIndex + 2]),
-    selectionLabel: nodeId ? `선택 프레임 ${nodeId}` : '파일 전체',
+    selectionLabel: nodeId ? `선택 화면 ${nodeId}` : '파일 전체',
     connectedAt: new Date(),
   }
 }

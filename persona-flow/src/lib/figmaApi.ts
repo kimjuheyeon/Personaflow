@@ -54,7 +54,7 @@ async function fetchFigmaJson<T>(path: string, token: string): Promise<T> {
       throw new Error('Figma 개인 액세스 토큰이 올바르지 않거나 파일 접근 권한이 없습니다.')
     }
     if (response.status === 404) {
-      throw new Error('Figma 파일 또는 선택한 프레임을 찾지 못했습니다.')
+      throw new Error('Figma 파일 또는 선택한 화면을 찾지 못했습니다.')
     }
     throw new Error(`Figma API 요청 실패 (HTTP ${response.status})`)
   }
@@ -183,14 +183,14 @@ export async function importFigmaFrames(
 
   const limitedNodes = nodes.slice(0, MAX_IMPORTED_FRAMES)
   if (limitedNodes.length === 0) {
-    throw new Error('가져올 수 있는 Figma 프레임을 찾지 못했습니다. 프레임을 선택한 링크로 다시 시도해주세요.')
+    throw new Error('가져올 수 있는 Figma 화면을 찾지 못했습니다. 화면을 선택한 링크로 다시 시도해주세요.')
   }
 
   const importedSource: FigmaSource = {
     ...source,
     fileName,
     versionId,
-    selectionLabel: source.nodeId ? `선택 프레임 ${source.nodeId}` : `${limitedNodes.length}개 프레임`,
+    selectionLabel: source.nodeId ? `선택 화면 ${source.nodeId}` : `${limitedNodes.length}개 화면`,
     connectedAt: new Date(),
   }
   const imageUrls = await fetchImageUrls(

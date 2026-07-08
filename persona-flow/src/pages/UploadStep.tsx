@@ -108,8 +108,8 @@ export default function UploadStep({
   const [figmaError, setFigmaError] = useState<string | null>(null)
   const [figmaToken, setFigmaToken] = useState(() => getStoredFigmaToken())
   const [figmaImporting, setFigmaImporting] = useState(false)
-  const [showFigmaAdvanced, setShowFigmaAdvanced] = useState(() =>
-    Boolean(getStoredFigmaToken())
+  const [showFigmaAdvanced, setShowFigmaAdvanced] = useState(
+    () => Boolean(getStoredFigmaToken()) || aiMode === 'gemini_free'
   )
 
   const handleSourceTypeChange = (nextSourceType: SourceType) => {
@@ -117,7 +117,7 @@ export default function UploadStep({
     setFigmaError(null)
     if (nextSourceType === 'figma') {
       onTestModeChange('single')
-      onAiModeChange('demo')
+      if (aiMode === 'gemini_free') setShowFigmaAdvanced(true)
       if (figmaSource) onFramesChange([createFigmaFrame(figmaSource)])
     }
   }
@@ -134,7 +134,7 @@ export default function UploadStep({
     onFigmaSourceChange(source)
     onSourceTypeChange('figma')
     onTestModeChange('single')
-    onAiModeChange('demo')
+    if (aiMode === 'gemini_free') setShowFigmaAdvanced(true)
     onFramesChange([createFigmaFrame(source)])
   }
 
@@ -155,10 +155,9 @@ export default function UploadStep({
       onFigmaSourceChange(imported.source)
       onSourceTypeChange('figma')
       onTestModeChange('single')
-      onAiModeChange('demo')
       onFramesChange(normalizeFrameOrder(imported.frames))
     } catch (e) {
-      setFigmaError(e instanceof Error ? e.message : 'Figma 프레임을 가져오지 못했습니다.')
+      setFigmaError(e instanceof Error ? e.message : 'Figma 화면 이미지를 가져오지 못했습니다.')
       onFigmaSourceChange(source)
       onFramesChange([createFigmaFrame(source)])
     } finally {
@@ -386,7 +385,9 @@ export default function UploadStep({
   const hasFigmaFrameImages = sourceType === 'figma' && frames.some((frame) => frame.imageUrl)
   const canProceed =
     sourceType === 'figma'
-      ? Boolean(figmaSource)
+      ? aiMode === 'gemini_free'
+        ? Boolean(figmaSource && hasFigmaFrameImages)
+        : Boolean(figmaSource)
       : testMode === 'single'
       ? frames.length > 0
       : Boolean(variantA?.frames.length && variantB?.frames.length)
@@ -482,7 +483,7 @@ export default function UploadStep({
     <div className="rounded-md border border-gray-200 bg-white p-3">
       <p className="text-xs font-semibold text-gray-900">실행 모드</p>
       <p className="mt-0.5 text-[11px] leading-relaxed text-gray-500">
-        처음 테스트는 무료 데모로 바로 진행할 수 있습니다.
+        실제 AI 분석은 화면 이미지와 Gemini 무료 API 키가 필요합니다.
       </p>
       <div className="mt-3 grid grid-cols-2 rounded-md border border-gray-200 bg-gray-50 p-0.5">
         <button
@@ -493,11 +494,14 @@ export default function UploadStep({
               : 'text-gray-500 hover:text-gray-800'
           }`}
         >
-          <Bot className="h-3.5 w-3.5" />
-          Demo
+            <Bot className="h-3.5 w-3.5" />
+          샘플
         </button>
         <button
-          onClick={() => onAiModeChange('gemini_free')}
+          onClick={() => {
+            onAiModeChange('gemini_free')
+            if (sourceType === 'figma') setShowFigmaAdvanced(true)
+          }}
           className={`flex items-center justify-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-semibold transition-colors ${
             aiMode === 'gemini_free'
               ? 'bg-white text-gray-900 shadow-sm'
@@ -505,7 +509,7 @@ export default function UploadStep({
           }`}
         >
           <KeyRound className="h-3.5 w-3.5" />
-          Gemini
+          실제 AI
         </button>
       </div>
     </div>
@@ -620,7 +624,7 @@ export default function UploadStep({
             어떤 디자인을 테스트할까요?
           </h2>
           <p className="mt-1 text-sm text-gray-500">
-            Figma 링크만 연결하면 무료 데모 테스트를 바로 시작할 수 있습니다.
+            Figma 링크를 연결한 뒤 샘플 리포트 또는 실제 AI 분석을 선택하세요.
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
@@ -643,7 +647,7 @@ export default function UploadStep({
                       Figma 링크로 시작
                     </h3>
                     <p className="mt-1 text-sm text-gray-500">
-                      파일, 선택 프레임, 프로토타입 링크를 붙여넣어 테스트 소스로 연결합니다.
+                      Figma 파일, 선택 화면, 프로토타입 링크를 붙여넣어 테스트 소스로 연결합니다.
                     </p>
                   </div>
                 </div>
@@ -667,7 +671,7 @@ export default function UploadStep({
                       onClick={handleConnectFigma}
                       className="h-11 px-5 text-sm"
                     >
-                      링크로 데모 시작
+                      링크 연결
                     </Button>
                   </div>
 
@@ -680,14 +684,19 @@ export default function UploadStep({
                         showFigmaAdvanced ? 'rotate-180' : ''
                       }`}
                     />
-                    비공개 Figma 파일에서 화면 이미지 가져오기 (선택)
+                    {aiMode === 'gemini_free'
+                      ? '실제 AI용 Figma 화면 이미지 가져오기'
+                      : '비공개 Figma 화면 이미지 가져오기 (샘플은 선택)'}
                   </button>
 
                   {showFigmaAdvanced && (
                     <div className="mt-3 space-y-2">
                       <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-900">
                         여기에 넣는 값은 Figma 계정에서 발급한 <b>개인 액세스 토큰</b>입니다.
-                        Figma MCP 설정값이 아니며, 링크만으로 데모 테스트를 할 때는 비워도 됩니다.
+                        Codex나 Figma 플러그인 설정값이 아닙니다.
+                        {aiMode === 'gemini_free'
+                          ? ' 실제 AI가 화면을 읽으려면 이 토큰으로 Figma 화면 이미지를 가져와야 합니다.'
+                          : ' 샘플 리포트를 만들 때는 비워도 됩니다.'}
                       </div>
                       <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
                         <Input
@@ -729,6 +738,12 @@ export default function UploadStep({
                   )}
 
                   {figmaError && <p className="mt-3 text-xs text-red-600">{figmaError}</p>}
+                  {figmaSource && aiMode === 'gemini_free' && !hasFigmaFrameImages && (
+                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
+                      실제 AI 분석을 하려면 Figma 화면 이미지가 필요합니다. 위 영역에서
+                      Figma 개인 액세스 토큰으로 화면 이미지를 먼저 가져오세요.
+                    </div>
+                  )}
                 </div>
 
                 {figmaSource ? (
@@ -743,7 +758,9 @@ export default function UploadStep({
                       <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80">
                         {hasFigmaFrameImages
                           ? `${frames.length}개 화면 이미지를 테스트 소스로 가져왔습니다.`
-                          : '개인 액세스 토큰 없이도 Figma 링크 기반 Demo AI 테스트는 진행할 수 있습니다.'}
+                          : aiMode === 'gemini_free'
+                          ? '실제 AI 분석은 아직 실행할 수 없습니다. 위에서 Figma 화면 이미지를 먼저 가져오세요.'
+                          : '개인 액세스 토큰 없이도 Figma 링크 기반 샘플 리포트는 만들 수 있습니다.'}
                       </p>
                     </div>
 
@@ -761,7 +778,9 @@ export default function UploadStep({
                     <Link className="mx-auto mb-3 h-7 w-7 text-gray-300" />
                     <p className="text-sm font-medium text-gray-700">Figma 링크를 붙여넣으세요</p>
                     <p className="mt-1 text-xs text-gray-400">
-                      개인 액세스 토큰이나 API 키 없이도 다음 단계로 넘어갈 수 있습니다.
+                      {aiMode === 'gemini_free'
+                        ? '실제 AI 분석은 Figma 화면 이미지와 Gemini 무료 API 키가 필요합니다.'
+                        : '개인 액세스 토큰이나 API 키 없이도 다음 단계로 넘어갈 수 있습니다.'}
                     </p>
                   </div>
                 )}
@@ -918,7 +937,7 @@ export default function UploadStep({
                   Figma 연결
                 </span>
                 <span className="mt-1 block text-xs text-gray-500">
-                  링크만으로 무료 테스트 시작
+                  링크만으로 샘플 리포트 생성
                 </span>
               </button>
               <button
@@ -953,7 +972,7 @@ export default function UploadStep({
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-gray-500">실행</dt>
                   <dd className="font-medium text-gray-900">
-                    {aiMode === 'demo' ? 'Demo AI' : 'Gemini 무료 키'}
+                    {aiMode === 'demo' ? '샘플 리포트' : '실제 AI 분석'}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3">

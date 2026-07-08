@@ -226,9 +226,9 @@ function Sidebar({
           />
           <span className="flex-1 text-left truncate">
             {aiMode === 'demo'
-              ? 'Demo AI 사용 중'
+              ? '샘플 리포트 모드'
               : hasKey
-              ? 'Gemini 연결됨'
+              ? '실제 AI 연결됨'
               : 'Gemini 키 미설정'}
           </span>
           <span className="text-slate-500">⚙</span>

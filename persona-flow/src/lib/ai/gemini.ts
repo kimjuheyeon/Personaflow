@@ -146,10 +146,12 @@ async function buildFrameParts(frames: FrameInput[]): Promise<Part[]> {
         const img = await imageToBase64(f.file ?? f.imageUrl)
         parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
       } catch {
-        parts.push({ text: '(이미지를 불러오지 못해 화면 메타데이터만 제공합니다.)' })
+        throw new Error(
+          `"${getFrameDisplayName(f)}" 화면 이미지를 AI에 전달하지 못했습니다. Figma 화면 이미지를 다시 가져오거나 PNG/JPG로 업로드해주세요.`
+        )
       }
     } else {
-      parts.push({ text: '(아직 프레임 이미지가 연결되지 않아 화면 메타데이터만 제공합니다.)' })
+      parts.push({ text: '(아직 화면 이미지가 연결되지 않아 화면 메타데이터만 제공합니다.)' })
     }
   }
   return parts
@@ -171,10 +173,12 @@ async function buildVariantParts(variants: DesignVariant[]): Promise<Part[]> {
           const img = await imageToBase64(frame.file ?? frame.imageUrl)
           parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
         } catch {
-          parts.push({ text: '(이미지를 불러오지 못해 화면 메타데이터만 제공합니다.)' })
+          throw new Error(
+            `"${getFrameDisplayName(frame)}" 화면 이미지를 AI에 전달하지 못했습니다. Figma 화면 이미지를 다시 가져오거나 PNG/JPG로 업로드해주세요.`
+          )
         }
       } else {
-        parts.push({ text: '(아직 프레임 이미지가 연결되지 않아 화면 메타데이터만 제공합니다.)' })
+        parts.push({ text: '(아직 화면 이미지가 연결되지 않아 화면 메타데이터만 제공합니다.)' })
       }
     }
   }

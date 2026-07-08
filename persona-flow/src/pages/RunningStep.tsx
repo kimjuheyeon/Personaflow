@@ -46,6 +46,10 @@ const DEVICE_LABEL: Record<string, string> = {
   tablet: '태블릿',
 }
 
+function hasFrameImage(frame: Frame): boolean {
+  return Boolean(frame.file || frame.imageUrl)
+}
+
 function buildProjectName(
   frames: Frame[],
   testMode: TestMode,
@@ -101,6 +105,16 @@ export default function RunningStep({
       setError('Gemini API 키가 필요합니다. 키를 설정한 뒤 다시 시도하세요.')
       return
     }
+
+    const targetFrames =
+      testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
+    if (aiMode === 'gemini_free' && !targetFrames.some(hasFrameImage)) {
+      setError(
+        '실제 AI 분석에는 화면 이미지가 필요합니다. Figma 개인 액세스 토큰으로 화면 이미지를 가져오거나 PNG/JPG 이미지를 업로드한 뒤 다시 실행하세요.'
+      )
+      return
+    }
+
     setError(null)
     setIsDone(false)
     setCurrentStep(0)
@@ -127,8 +141,7 @@ export default function RunningStep({
       if (cancelledRef.current) return
       stopStageAnimation()
 
-      const reportFrames =
-        testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
+      const reportFrames = targetFrames
 
       const report: TestReport = {
         id: `report-${Date.now()}`,
@@ -238,7 +251,7 @@ export default function RunningStep({
               {isDone
                 ? '리포트를 불러오는 중입니다...'
                 : aiMode === 'demo'
-                ? 'Demo AI가 무료 모드로 빠른 UX 점검을 만들고 있습니다'
+                ? '샘플 리포트를 생성하고 있습니다'
                 : '페르소나가 시안을 직접 사용하며 UX를 분석하고 있습니다'}
             </p>
           </div>
@@ -329,7 +342,7 @@ export default function RunningStep({
                   ? variants.reduce((sum, variant) => sum + variant.frames.length, 0)
                   : frames.length}
               </span>
-              <span className="text-xs text-gray-500">개 프레임</span>
+              <span className="text-xs text-gray-500">개 화면</span>
             </div>
             {testMode === 'ab' && (
               <p className="text-xs text-gray-400 mt-1">
@@ -342,8 +355,8 @@ export default function RunningStep({
 
         <p className="text-xs text-gray-400 text-center">
           {testMode === 'ab'
-            ? `${aiMode === 'demo' ? 'Demo AI' : 'Gemini'}가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다`
-            : `${aiMode === 'demo' ? 'Demo AI' : 'Gemini'}가 각 페르소나 관점에서 6축 UX 기준을 평가합니다`}
+            ? `${aiMode === 'demo' ? '샘플 모드' : 'Gemini'}가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다`
+            : `${aiMode === 'demo' ? '샘플 모드' : 'Gemini'}가 각 페르소나 관점에서 6축 UX 기준을 평가합니다`}
         </p>
       </div>
     </div>

@@ -8,13 +8,47 @@ export interface InlineImage {
   data: string // base64 (data URL 접두사 제외)
 }
 
-function loadImage(src: File | string): Promise<HTMLImageElement> {
+function isRemoteUrl(src: string): boolean {
+  return /^https?:\/\//i.test(src)
+}
+
+async function resolveImageSource(src: File | string): Promise<{ src: string; revoke?: () => void }> {
+  if (typeof src !== 'string') {
+    const objectUrl = URL.createObjectURL(src)
+    return {
+      src: objectUrl,
+      revoke: () => URL.revokeObjectURL(objectUrl),
+    }
+  }
+
+  if (!isRemoteUrl(src)) return { src }
+
+  let response: Response
+  try {
+    response = await fetch(src)
+  } catch {
+    throw new Error('원격 이미지를 불러오지 못했습니다.')
+  }
+
+  if (!response.ok) {
+    throw new Error(`원격 이미지 요청 실패 (HTTP ${response.status})`)
+  }
+
+  const blob = await response.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  return {
+    src: objectUrl,
+    revoke: () => URL.revokeObjectURL(objectUrl),
+  }
+}
+
+async function loadImage(src: File | string): Promise<HTMLImageElement> {
+  const resolved = await resolveImageSource(src)
   return new Promise((resolve, reject) => {
     const img = new Image()
-    let objectUrl: string | null = null
 
     const cleanup = () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      resolved.revoke?.()
     }
 
     img.onload = () => {
@@ -26,12 +60,7 @@ function loadImage(src: File | string): Promise<HTMLImageElement> {
       reject(new Error('이미지를 불러오지 못했습니다.'))
     }
 
-    if (typeof src === 'string') {
-      img.src = src
-    } else {
-      objectUrl = URL.createObjectURL(src)
-      img.src = objectUrl
-    }
+    img.src = resolved.src
   })
 }
 

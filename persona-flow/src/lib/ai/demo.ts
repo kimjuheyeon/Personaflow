@@ -159,8 +159,8 @@ export async function analyzeDesignDemo(
     taskMetrics: demoMetrics,
     overallSummary:
       sourceType === 'figma'
-        ? 'Demo AI Mode는 Figma 링크와 화면 메타데이터를 기준으로 빠른 UX 점검 결과를 생성했습니다. 실제 화면 이미지 이해나 프로토타입 연결 자동 탐색은 아직 제한적이므로, 이번 결과는 제품 흐름 검증용 초안으로 보는 것이 적절합니다. 개인 액세스 토큰을 연결하면 Figma 프레임 이미지를 가져와 분석 정확도를 높일 수 있습니다.'
-        : 'Demo AI Mode는 업로드된 화면 순서와 기본 UX 체크리스트를 기준으로 빠른 점검 결과를 생성했습니다. API 키 없이 즉시 제품 흐름을 확인하기 위한 모드이므로, 실제 화면 세부 분석은 Gemini 무료 키 연결 후 재실행하는 것이 좋습니다.',
+        ? '샘플 리포트는 Figma 링크와 화면 메타데이터를 기준으로 빠른 UX 점검 결과를 생성했습니다. 실제 화면 이미지 이해나 프로토타입 연결 자동 탐색은 아직 제한적이므로, 이번 결과는 제품 흐름 검증용 초안으로 보는 것이 적절합니다. 실제 AI 분석을 하려면 개인 액세스 토큰으로 Figma 화면 이미지를 가져온 뒤 Gemini 무료 API 키로 재실행하세요.'
+        : '샘플 리포트는 업로드된 화면 순서와 기본 UX 체크리스트를 기준으로 빠른 점검 결과를 생성했습니다. API 키 없이 즉시 제품 흐름을 확인하기 위한 모드이므로, 실제 화면 세부 분석은 Gemini 무료 API 키 연결 후 재실행하는 것이 좋습니다.',
     walkthrough: buildWalkthrough(frames, personas),
   }
 }
@@ -183,7 +183,7 @@ export async function analyzeABDesignDemo(
     confidence: 64,
     summary: `${winner}안이 현재 입력된 화면 구성 기준으로 태스크 흐름 설명력이 더 높아 보입니다.`,
     recommendation:
-      'Demo 결과는 정식 트래픽 실험이 아니라 구조 기반 사전 점검입니다. 실제 적용 전에는 CTA 문구, 첫 화면 가치 전달, 단계 수를 기준으로 한 번 더 비교하세요.',
+      '샘플 결과는 정식 트래픽 실험이 아니라 구조 기반 사전 점검입니다. 실제 적용 전에는 CTA 문구, 첫 화면 가치 전달, 단계 수를 기준으로 한 번 더 비교하세요.',
     keyInsights: [
       abConfig.goal || '테스트 목적을 명확히 쓰면 비교 기준이 더 안정적입니다.',
       'A/B 비교에서는 같은 플로우 지점의 화면을 같은 순서로 넣어야 합니다.',
@@ -242,7 +242,7 @@ export async function analyzeABDesignDemo(
     ],
     taskMetrics: { completionRate: 70, avgClicks: 6.1, errorRate: 16, dropoffPoint: '전환 CTA' },
     overallSummary:
-      'Demo AI Mode가 A/B 화면 구성을 기준으로 사전 비교 리포트를 만들었습니다. 이 결과는 정식 AI 비전 분석이 아니라 구조/체크리스트 기반 판단이므로, 빠른 방향성 확인에 적합합니다.',
+      '샘플 모드가 A/B 화면 구성을 기준으로 사전 비교 리포트를 만들었습니다. 이 결과는 정식 AI 비전 분석이 아니라 구조/체크리스트 기반 판단이므로, 빠른 방향성 확인에 적합합니다.',
     walkthrough: buildWalkthrough([...framesA, ...framesB], personas),
     abComparison: comparison,
   }
