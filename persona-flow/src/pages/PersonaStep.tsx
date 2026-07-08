@@ -10,8 +10,9 @@ import {
   SelectItem,
   SelectValue,
 } from '@/components/ui/select'
+import { suggestDemoPersonas } from '@/lib/ai/demo'
 import { suggestPersonas } from '@/lib/ai/gemini'
-import type { PersonaConfig, DigitalLevel, DeviceType, Frame } from '@/types'
+import type { AIMode, PersonaConfig, DigitalLevel, DeviceType, Frame, SourceType } from '@/types'
 
 interface PersonaStepProps {
   personas: PersonaConfig[]
@@ -19,6 +20,8 @@ interface PersonaStepProps {
   onNext: () => void
   onBack: () => void
   frames: Frame[]
+  sourceType: SourceType
+  aiMode: AIMode
   apiKey: string
   model: string
   onRequireKey: () => void
@@ -57,6 +60,8 @@ export default function PersonaStep({
   onNext,
   onBack,
   frames,
+  sourceType,
+  aiMode,
   apiKey,
   model,
   onRequireKey,
@@ -69,6 +74,14 @@ export default function PersonaStep({
   const [form, setForm] = useState(EMPTY_FORM)
 
   const handleAiRecommend = async () => {
+    if (aiMode === 'demo') {
+      const list = suggestDemoPersonas(sourceType)
+      setAiPersonas(list)
+      setSelectedIds(new Set(list.map((p) => p.id)))
+      setError(null)
+      return
+    }
+
     if (!apiKey) {
       onRequireKey()
       return
@@ -171,12 +184,16 @@ export default function PersonaStep({
           {aiPersonas.length === 0 && !loading && (
             <div className="py-12 border border-gray-200 rounded-md bg-white text-center space-y-3">
               <p className="text-sm text-gray-600 font-medium">AI가 최적의 페르소나를 추천합니다</p>
-              <p className="text-xs text-gray-400">업로드한 시안을 Gemini가 분석해 사용자 유형을 제안합니다</p>
+              <p className="text-xs text-gray-400">
+                {aiMode === 'demo'
+                  ? 'API 키 없이 기본 테스트 페르소나를 생성합니다'
+                  : '업로드한 시안을 Gemini가 분석해 사용자 유형을 제안합니다'}
+              </p>
               {error && (
                 <p className="text-xs text-red-600 max-w-md mx-auto leading-relaxed px-4">{error}</p>
               )}
               <Button onClick={handleAiRecommend} size="sm">
-                AI 페르소나 추천받기
+                {aiMode === 'demo' ? 'Demo 페르소나 불러오기' : 'AI 페르소나 추천받기'}
               </Button>
             </div>
           )}
@@ -199,7 +216,7 @@ export default function PersonaStep({
                   onClick={handleAiRecommend}
                   className="text-xs text-blue-600 hover:text-blue-700 font-medium"
                 >
-                  다시 추천받기
+                  {aiMode === 'demo' ? 'Demo 페르소나 다시 불러오기' : '다시 추천받기'}
                 </button>
               </div>
 

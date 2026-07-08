@@ -2,13 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Check, Circle, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
+import { analyzeABDesignDemo, analyzeDesignDemo } from '@/lib/ai/demo'
 import { analyzeABDesign, analyzeDesign } from '@/lib/ai/gemini'
 import { getFrameProjectLabel } from '@/lib/frameNaming'
 import type {
   ABTestConfig,
+  AIMode,
   DesignVariant,
+  FigmaSource,
   PersonaConfig,
   Frame,
+  SourceType,
   TestMode,
   TestReport,
 } from '@/types'
@@ -19,6 +23,9 @@ interface RunningStepProps {
   testMode: TestMode
   variants: DesignVariant[]
   abConfig: ABTestConfig
+  sourceType: SourceType
+  figmaSource: FigmaSource | null
+  aiMode: AIMode
   apiKey: string
   model: string
   onComplete: (report: TestReport) => void
@@ -39,7 +46,18 @@ const DEVICE_LABEL: Record<string, string> = {
   tablet: '태블릿',
 }
 
-function buildProjectName(frames: Frame[], testMode: TestMode, abConfig: ABTestConfig): string {
+function buildProjectName(
+  frames: Frame[],
+  testMode: TestMode,
+  abConfig: ABTestConfig,
+  sourceType: SourceType,
+  figmaSource: FigmaSource | null
+): string {
+  if (sourceType === 'figma') {
+    return figmaSource?.fileName
+      ? `Figma 플로우 · ${figmaSource.fileName}`
+      : 'Figma 플로우 테스트'
+  }
   if (testMode === 'ab') {
     const goal = abConfig.goal.trim()
     return goal ? `A/B 테스트 · ${goal}` : '화면 A/B 테스트'
@@ -55,6 +73,9 @@ export default function RunningStep({
   testMode,
   variants,
   abConfig,
+  sourceType,
+  figmaSource,
+  aiMode,
   apiKey,
   model,
   onComplete,
@@ -76,7 +97,7 @@ export default function RunningStep({
   }
 
   const run = useCallback(async () => {
-    if (!apiKey) {
+    if (aiMode === 'gemini_free' && !apiKey) {
       setError('Gemini API 키가 필요합니다. 키를 설정한 뒤 다시 시도하세요.')
       return
     }
@@ -96,7 +117,11 @@ export default function RunningStep({
 
     try {
       const result =
-        testMode === 'ab'
+        aiMode === 'demo'
+          ? testMode === 'ab'
+            ? await analyzeABDesignDemo(variants, personas, abConfig)
+            : await analyzeDesignDemo(frames, personas, sourceType, figmaSource)
+          : testMode === 'ab'
           ? await analyzeABDesign(apiKey, model, variants, personas, abConfig)
           : await analyzeDesign(apiKey, model, frames, personas)
       if (cancelledRef.current) return
@@ -107,8 +132,11 @@ export default function RunningStep({
 
       const report: TestReport = {
         id: `report-${Date.now()}`,
-        projectName: buildProjectName(reportFrames, testMode, abConfig),
+        projectName: buildProjectName(reportFrames, testMode, abConfig, sourceType, figmaSource),
         createdAt: new Date(),
+        sourceType,
+        figmaSource: figmaSource ?? undefined,
+        aiMode,
         testMode,
         personas,
         frames: reportFrames,
@@ -134,7 +162,19 @@ export default function RunningStep({
       stopStageAnimation()
       setError(e instanceof Error ? e.message : 'AI 분석에 실패했습니다.')
     }
-  }, [abConfig, apiKey, frames, model, personas, testMode, variants, onComplete])
+  }, [
+    abConfig,
+    aiMode,
+    apiKey,
+    figmaSource,
+    frames,
+    model,
+    personas,
+    sourceType,
+    testMode,
+    variants,
+    onComplete,
+  ])
 
   useEffect(() => {
     cancelledRef.current = false
@@ -197,6 +237,8 @@ export default function RunningStep({
             <p className="text-xs text-gray-500">
               {isDone
                 ? '리포트를 불러오는 중입니다...'
+                : aiMode === 'demo'
+                ? 'Demo AI가 무료 모드로 빠른 UX 점검을 만들고 있습니다'
                 : '페르소나가 시안을 직접 사용하며 UX를 분석하고 있습니다'}
             </p>
           </div>
@@ -300,8 +342,8 @@ export default function RunningStep({
 
         <p className="text-xs text-gray-400 text-center">
           {testMode === 'ab'
-            ? 'Gemini가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
-            : 'Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
+            ? `${aiMode === 'demo' ? 'Demo AI' : 'Gemini'}가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다`
+            : `${aiMode === 'demo' ? 'Demo AI' : 'Gemini'}가 각 페르소나 관점에서 6축 UX 기준을 평가합니다`}
         </p>
       </div>
     </div>

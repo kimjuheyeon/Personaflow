@@ -3,6 +3,18 @@ export type DigitalLevel = 'beginner' | 'intermediate' | 'expert'
 export type DeviceType = 'desktop' | 'mobile' | 'tablet'
 export type TestMode = 'single' | 'ab'
 export type VariantId = 'A' | 'B'
+export type SourceType = 'figma' | 'image'
+export type AIMode = 'demo' | 'gemini_free'
+
+export interface FigmaSource {
+  url: string
+  fileKey: string
+  nodeId?: string
+  versionId?: string
+  fileName?: string
+  selectionLabel?: string
+  connectedAt: Date
+}
 
 export interface Frame {
   id: string
@@ -12,6 +24,11 @@ export interface Frame {
   userLabel?: string
   flowOrder?: number
   file?: File
+  sourceType?: SourceType
+  figmaFileKey?: string
+  figmaNodeId?: string
+  figmaVersionId?: string
+  figmaUrl?: string
 }
 
 export interface DesignVariant {
@@ -123,6 +140,9 @@ export interface TestReport {
   id: string
   projectName: string
   createdAt: Date
+  sourceType?: SourceType
+  figmaSource?: FigmaSource
+  aiMode?: AIMode
   testMode?: TestMode
   personas: PersonaConfig[]
   frames: Frame[]

@@ -11,10 +11,13 @@ import { imageToBase64 } from './lib/image'
 import { MODEL_OPTIONS } from './lib/ai/keyStore'
 import type {
   ABTestConfig,
+  AIMode,
   DesignVariant,
   FeedbackThread,
+  FigmaSource,
   Frame,
   PersonaConfig,
+  SourceType,
   TestMode,
   TestReport,
 } from './types'
@@ -24,14 +27,14 @@ type TestStep = 'upload' | 'persona' | 'running' | 'report'
 const STEP_ORDER: TestStep[] = ['upload', 'persona', 'running', 'report']
 
 const STEP_LABELS: Record<TestStep, string> = {
-  upload: '시안 입력',
+  upload: '테스트 소스',
   persona: '페르소나 설정',
   running: 'AI 테스트 실행',
   report: '리포트 확인',
 }
 
 const BREADCRUMB: Record<TestStep, string> = {
-  upload: '테스트 설정 / 시안 입력',
+  upload: '테스트 설정 / 테스트 소스',
   persona: '테스트 설정 / 페르소나 설정',
   running: 'AI 테스트 실행',
   report: '결과 / 리포트 확인',
@@ -57,6 +60,7 @@ function Sidebar({
   onReset,
   hasKey,
   model,
+  aiMode,
   onOpenKey,
   history,
   currentReportId,
@@ -66,6 +70,7 @@ function Sidebar({
   onReset: () => void
   hasKey: boolean
   model: string
+  aiMode: AIMode
   onOpenKey: () => void
   history: TestReport[]
   currentReportId?: string
@@ -216,15 +221,19 @@ function Sidebar({
         >
           <span
             className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              hasKey ? 'bg-green-400' : 'bg-red-400'
+              aiMode === 'demo' || hasKey ? 'bg-green-400' : 'bg-red-400'
             }`}
           />
           <span className="flex-1 text-left truncate">
-            {hasKey ? `Gemini 연결됨` : 'API 키 미설정'}
+            {aiMode === 'demo'
+              ? 'Demo AI 사용 중'
+              : hasKey
+              ? 'Gemini 연결됨'
+              : 'Gemini 키 미설정'}
           </span>
           <span className="text-slate-500">⚙</span>
         </button>
-        {hasKey && (
+        {aiMode === 'gemini_free' && hasKey && (
           <p className="px-3 pt-1 text-[10px] text-slate-600 truncate">{modelLabel}</p>
         )}
       </div>
@@ -242,6 +251,11 @@ async function prepareFrameForHistory(frame: Frame): Promise<Frame> {
     originalName: frame.originalName,
     userLabel: frame.userLabel,
     flowOrder: frame.flowOrder,
+    sourceType: frame.sourceType,
+    figmaFileKey: frame.figmaFileKey,
+    figmaNodeId: frame.figmaNodeId,
+    figmaVersionId: frame.figmaVersionId,
+    figmaUrl: frame.figmaUrl,
   }
 
   if (frame.imageUrl.startsWith('data:')) {
@@ -292,6 +306,10 @@ async function prepareReportForHistory(report: TestReport): Promise<TestReport> 
 function App() {
   const [step, setStep] = useState<TestStep>('upload')
   const [testMode, setTestMode] = useState<TestMode>('single')
+  const [sourceType, setSourceType] = useState<SourceType>('figma')
+  const [figmaUrl, setFigmaUrl] = useState('')
+  const [figmaSource, setFigmaSource] = useState<FigmaSource | null>(null)
+  const [aiMode, setAiMode] = useState<AIMode>('demo')
   const [frames, setFrames] = useState<Frame[]>([])
   const [variants, setVariants] = useState<DesignVariant[]>(() => createDefaultVariants())
   const [abConfig, setAbConfig] = useState<ABTestConfig>(() => createDefaultABConfig())
@@ -300,11 +318,15 @@ function App() {
   const [history, setHistory] = useState<TestReport[]>(() => getTestHistory())
 
   const { apiKey, model, hasKey, setApiKey, clearApiKey, setModel } = useApiKey()
-  const [keyModalOpen, setKeyModalOpen] = useState(() => !hasKey)
+  const [keyModalOpen, setKeyModalOpen] = useState(false)
 
   const resetAll = () => {
     setStep('upload')
     setTestMode('single')
+    setSourceType('figma')
+    setFigmaUrl('')
+    setFigmaSource(null)
+    setAiMode('demo')
     setFrames([])
     setVariants(createDefaultVariants())
     setAbConfig(createDefaultABConfig())
@@ -335,6 +357,10 @@ function App() {
   const handleOpenReport = (savedReport: TestReport) => {
     const mode = savedReport.testMode ?? 'single'
     setTestMode(mode)
+    setSourceType(savedReport.sourceType ?? 'image')
+    setFigmaSource(savedReport.figmaSource ?? null)
+    setFigmaUrl(savedReport.figmaSource?.url ?? '')
+    setAiMode(savedReport.aiMode ?? 'gemini_free')
     setFrames(savedReport.frames)
     setVariants(savedReport.variants ?? createDefaultVariants())
     setAbConfig(savedReport.abConfig ?? createDefaultABConfig())
@@ -383,6 +409,7 @@ function App() {
         onReset={resetAll}
         hasKey={hasKey}
         model={model}
+        aiMode={aiMode}
         onOpenKey={() => setKeyModalOpen(true)}
         history={history}
         currentReportId={report?.id}
@@ -404,6 +431,14 @@ function App() {
             <UploadStep
               frames={frames}
               onFramesChange={setFrames}
+              sourceType={sourceType}
+              onSourceTypeChange={setSourceType}
+              figmaUrl={figmaUrl}
+              onFigmaUrlChange={setFigmaUrl}
+              figmaSource={figmaSource}
+              onFigmaSourceChange={setFigmaSource}
+              aiMode={aiMode}
+              onAiModeChange={setAiMode}
               testMode={testMode}
               onTestModeChange={setTestMode}
               variants={variants}
@@ -420,6 +455,8 @@ function App() {
               onNext={handlePersonaNext}
               onBack={handlePersonaBack}
               frames={activeFrames}
+              sourceType={sourceType}
+              aiMode={aiMode}
               apiKey={apiKey}
               model={model}
               onRequireKey={() => setKeyModalOpen(true)}
@@ -432,6 +469,9 @@ function App() {
               testMode={testMode}
               variants={variants}
               abConfig={abConfig}
+              sourceType={sourceType}
+              figmaSource={figmaSource}
+              aiMode={aiMode}
               apiKey={apiKey}
               model={model}
               onComplete={handleAnalysisComplete}
@@ -457,7 +497,7 @@ function App() {
         open={keyModalOpen}
         initialKey={apiKey}
         currentModel={model}
-        dismissable={hasKey}
+        dismissable
         onSave={handleSaveKey}
         onClose={() => setKeyModalOpen(false)}
         onClear={handleClearKey}

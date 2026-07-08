@@ -136,13 +136,21 @@ async function buildFrameParts(frames: FrameInput[]): Promise<Part[]> {
   const parts: Part[] = []
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i]
-    const img = await imageToBase64(f.file ?? f.imageUrl)
     parts.push({
       text: `■ ${f.name} | 순서: ${f.flowOrder ?? i + 1} | ID: ${
         f.id
       }${framePromptSecondary(f)}`,
     })
-    parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
+    if (f.file || f.imageUrl) {
+      try {
+        const img = await imageToBase64(f.file ?? f.imageUrl)
+        parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
+      } catch {
+        parts.push({ text: '(이미지를 불러오지 못해 화면 메타데이터만 제공합니다.)' })
+      }
+    } else {
+      parts.push({ text: '(아직 프레임 이미지가 연결되지 않아 화면 메타데이터만 제공합니다.)' })
+    }
   }
   return parts
 }
@@ -153,13 +161,21 @@ async function buildVariantParts(variants: DesignVariant[]): Promise<Part[]> {
     parts.push({ text: `■ ${variant.name} (${variant.id}안)` })
     for (let i = 0; i < variant.frames.length; i++) {
       const frame = variant.frames[i]
-      const img = await imageToBase64(frame.file ?? frame.imageUrl)
       parts.push({
         text: `■ ${variant.id}안 ${frame.name} | 순서: ${
           frame.flowOrder ?? i + 1
         } | ID: ${frame.id}${framePromptSecondary(frame)}`,
       })
-      parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
+      if (frame.file || frame.imageUrl) {
+        try {
+          const img = await imageToBase64(frame.file ?? frame.imageUrl)
+          parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
+        } catch {
+          parts.push({ text: '(이미지를 불러오지 못해 화면 메타데이터만 제공합니다.)' })
+        }
+      } else {
+        parts.push({ text: '(아직 프레임 이미지가 연결되지 않아 화면 메타데이터만 제공합니다.)' })
+      }
     }
   }
   return parts

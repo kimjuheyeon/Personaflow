@@ -2,6 +2,7 @@ import type {
   ChatMessage,
   DesignVariant,
   FeedbackThread,
+  FigmaSource,
   Frame,
   FrameChat,
   TestReport,
@@ -34,6 +35,19 @@ function normalizeFrame(frame: Frame): Frame {
     originalName: frame.originalName,
     userLabel: frame.userLabel,
     flowOrder: frame.flowOrder,
+    sourceType: frame.sourceType,
+    figmaFileKey: frame.figmaFileKey,
+    figmaNodeId: frame.figmaNodeId,
+    figmaVersionId: frame.figmaVersionId,
+    figmaUrl: frame.figmaUrl,
+  }
+}
+
+function normalizeFigmaSource(source: FigmaSource | undefined): FigmaSource | undefined {
+  if (!source) return undefined
+  return {
+    ...source,
+    connectedAt: toDate(source.connectedAt),
   }
 }
 
@@ -66,6 +80,7 @@ function normalizeReport(report: TestReport): TestReport {
   return {
     ...report,
     createdAt: toDate(report.createdAt),
+    figmaSource: normalizeFigmaSource(report.figmaSource),
     frames: (report.frames ?? []).map(normalizeFrame),
     variants: report.variants?.map(normalizeVariant),
     frameChats: (report.frameChats ?? []).map(normalizeFrameChat),

@@ -1,9 +1,12 @@
 import { useCallback, useState } from 'react'
 import {
+  Bot,
   Check,
   GitCompare,
   GripVertical,
   ImageIcon,
+  KeyRound,
+  Link,
   Pencil,
   Plus,
   Upload,
@@ -11,16 +14,34 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { createFigmaFrame, getFigmaSourceLabel, parseFigmaUrl } from '@/lib/figma'
 import {
   getFrameSecondaryLabel,
   normalizeFrameOrder,
   stripFileExtension,
 } from '@/lib/frameNaming'
-import type { ABTestConfig, DesignVariant, Frame, TestMode, VariantId } from '@/types'
+import type {
+  ABTestConfig,
+  AIMode,
+  DesignVariant,
+  FigmaSource,
+  Frame,
+  SourceType,
+  TestMode,
+  VariantId,
+} from '@/types'
 
 interface UploadStepProps {
   frames: Frame[]
   onFramesChange: (frames: Frame[]) => void
+  sourceType: SourceType
+  onSourceTypeChange: (sourceType: SourceType) => void
+  figmaUrl: string
+  onFigmaUrlChange: (url: string) => void
+  figmaSource: FigmaSource | null
+  onFigmaSourceChange: (source: FigmaSource | null) => void
+  aiMode: AIMode
+  onAiModeChange: (mode: AIMode) => void
   testMode: TestMode
   onTestModeChange: (mode: TestMode) => void
   variants: DesignVariant[]
@@ -54,6 +75,14 @@ function isValidImage(file: File) {
 export default function UploadStep({
   frames,
   onFramesChange,
+  sourceType,
+  onSourceTypeChange,
+  figmaUrl,
+  onFigmaUrlChange,
+  figmaSource,
+  onFigmaSourceChange,
+  aiMode,
+  onAiModeChange,
   testMode,
   onTestModeChange,
   variants,
@@ -67,6 +96,33 @@ export default function UploadStep({
   const [dropFrameId, setDropFrameId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [figmaError, setFigmaError] = useState<string | null>(null)
+
+  const handleSourceTypeChange = (nextSourceType: SourceType) => {
+    onSourceTypeChange(nextSourceType)
+    setFigmaError(null)
+    if (nextSourceType === 'figma') {
+      onTestModeChange('single')
+      onAiModeChange('demo')
+      if (figmaSource) onFramesChange([createFigmaFrame(figmaSource)])
+    }
+  }
+
+  const handleConnectFigma = () => {
+    const source = parseFigmaUrl(figmaUrl)
+    if (!source) {
+      setFigmaError('Figma 파일, 디자인, 프로토타입 링크를 입력해주세요.')
+      onFigmaSourceChange(null)
+      return
+    }
+
+    setFigmaError(null)
+    onFigmaSourceChange(source)
+    onSourceTypeChange('figma')
+    onTestModeChange('single')
+    onAiModeChange('demo')
+    onFramesChange([createFigmaFrame(source)])
+  }
 
   const processSingleFiles = useCallback(
     (files: FileList | File[]) => {
@@ -281,7 +337,9 @@ export default function UploadStep({
   const variantA = variants.find((variant) => variant.id === 'A')
   const variantB = variants.find((variant) => variant.id === 'B')
   const canProceed =
-    testMode === 'single'
+    sourceType === 'figma'
+      ? Boolean(figmaSource)
+      : testMode === 'single'
       ? frames.length > 0
       : Boolean(variantA?.frames.length && variantB?.frames.length)
 
@@ -473,37 +531,142 @@ export default function UploadStep({
   return (
     <div className="max-w-5xl space-y-5">
       <div>
-        <h2 className="text-base font-semibold text-gray-900">시안 업로드</h2>
+        <h2 className="text-base font-semibold text-gray-900">테스트 소스</h2>
         <p className="text-xs text-gray-500 mt-0.5">
-          단일 시안 분석 또는 A/B 화면 비교 테스트를 선택하세요.
+          Figma 링크를 연결하거나 기존처럼 이미지를 업로드해 테스트를 시작하세요.
         </p>
       </div>
 
-      <div className="inline-flex rounded-md border border-gray-200 bg-white p-1">
-        <button
-          onClick={() => onTestModeChange('single')}
-          className={`px-4 py-2 text-xs font-semibold rounded transition-colors ${
-            testMode === 'single'
-              ? 'bg-slate-900 text-white'
-              : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          단일 시안 테스트
-        </button>
-        <button
-          onClick={() => onTestModeChange('ab')}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded transition-colors ${
-            testMode === 'ab'
-              ? 'bg-slate-900 text-white'
-              : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          <GitCompare className="w-3.5 h-3.5" />
-          화면 A/B 테스트
-        </button>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="border border-gray-200 rounded-md bg-white p-1 grid grid-cols-2">
+          <button
+            onClick={() => handleSourceTypeChange('figma')}
+            className={`flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded transition-colors ${
+              sourceType === 'figma'
+                ? 'bg-slate-900 text-white'
+                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            <Link className="w-3.5 h-3.5" />
+            Figma 연결
+          </button>
+          <button
+            onClick={() => handleSourceTypeChange('image')}
+            className={`flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded transition-colors ${
+              sourceType === 'image'
+                ? 'bg-slate-900 text-white'
+                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            <Upload className="w-3.5 h-3.5" />
+            이미지 업로드
+          </button>
+        </div>
+
+        <div className="border border-gray-200 rounded-md bg-white p-1 grid grid-cols-2">
+          <button
+            onClick={() => onAiModeChange('demo')}
+            className={`flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded transition-colors ${
+              aiMode === 'demo'
+                ? 'bg-slate-900 text-white'
+                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5" />
+            Demo AI
+          </button>
+          <button
+            onClick={() => onAiModeChange('gemini_free')}
+            className={`flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded transition-colors ${
+              aiMode === 'gemini_free'
+                ? 'bg-slate-900 text-white'
+                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            <KeyRound className="w-3.5 h-3.5" />
+            Gemini 무료 키
+          </button>
+        </div>
       </div>
 
-      {testMode === 'single' ? (
+      {sourceType === 'figma' ? (
+        <div className="border border-gray-200 rounded-md bg-white p-5 space-y-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-gray-900">Figma 링크 연결</h3>
+            <p className="text-xs text-gray-500">
+              파일, 프레임 선택, 프로토타입 링크를 붙여넣으면 테스트 소스로 저장합니다.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <Input
+              value={figmaUrl}
+              onChange={(e) => {
+                onFigmaUrlChange(e.target.value)
+                setFigmaError(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConnectFigma()
+              }}
+              placeholder="https://www.figma.com/design/..."
+              className="h-9 text-sm"
+            />
+            <Button size="sm" onClick={handleConnectFigma} className="px-4 flex-shrink-0">
+              연결
+            </Button>
+          </div>
+
+          {figmaError && <p className="text-xs text-red-600">{figmaError}</p>}
+
+          {figmaSource ? (
+            <div className="border border-green-200 bg-green-50 rounded-md p-3">
+              <p className="text-xs font-semibold text-green-800">연결됨</p>
+              <p className="text-xs text-green-700 mt-1 break-all">
+                {getFigmaSourceLabel(figmaSource)}
+              </p>
+              <p className="text-[11px] text-green-700/80 mt-2">
+                이번 단계에서는 Figma 링크와 version/node 메타데이터를 저장하고 Demo AI로
+                빠른 플로우 점검을 실행합니다. 실제 프레임 이미지와 prototype reaction 자동
+                수집은 다음 개발 단계에서 붙일 수 있게 구조를 열어두었습니다.
+              </p>
+            </div>
+          ) : (
+            <div className="border border-dashed border-gray-300 rounded-md py-10 text-center">
+              <Link className="w-7 h-7 text-gray-300 mx-auto mb-3" />
+              <p className="text-sm text-gray-600 font-medium">Figma 링크를 먼저 연결하세요</p>
+              <p className="text-xs text-gray-400 mt-1">
+                연결 후 API 키 없이 Demo AI 테스트를 바로 실행할 수 있습니다.
+              </p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="inline-flex rounded-md border border-gray-200 bg-white p-1">
+            <button
+              onClick={() => onTestModeChange('single')}
+              className={`px-4 py-2 text-xs font-semibold rounded transition-colors ${
+                testMode === 'single'
+                  ? 'bg-slate-900 text-white'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              단일 시안 테스트
+            </button>
+            <button
+              onClick={() => onTestModeChange('ab')}
+              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded transition-colors ${
+                testMode === 'ab'
+                  ? 'bg-slate-900 text-white'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <GitCompare className="w-3.5 h-3.5" />
+              화면 A/B 테스트
+            </button>
+          </div>
+
+          {testMode === 'single' ? (
         <div className="space-y-4">
           {frames.length === 0 ? (
             <>
@@ -592,6 +755,8 @@ export default function UploadStep({
             업로드 순서가 플로우 순서가 됩니다. 카드를 드래그하면 Screen01, Screen02 순서가 자동으로 다시 정렬됩니다.
           </p>
         </div>
+          )}
+        </>
       )}
 
       <div className="flex justify-end pt-1">
