@@ -659,7 +659,7 @@ export default function UploadStep({
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') handleConnectFigma()
                       }}
-                      placeholder="https://www.figma.com/design/..."
+                      placeholder="Figma 링크 붙여넣기"
                       className="h-11 bg-white text-sm"
                     />
                     <Button
@@ -667,7 +667,7 @@ export default function UploadStep({
                       onClick={handleConnectFigma}
                       className="h-11 px-5 text-sm"
                     >
-                      무료 데모로 연결
+                      링크로 데모 시작
                     </Button>
                   </div>
 
@@ -680,45 +680,51 @@ export default function UploadStep({
                         showFigmaAdvanced ? 'rotate-180' : ''
                       }`}
                     />
-                    Figma 토큰으로 실제 프레임 가져오기
+                    비공개 Figma 파일에서 화면 이미지 가져오기 (선택)
                   </button>
 
                   {showFigmaAdvanced && (
-                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
-                      <Input
-                        type="password"
-                        value={figmaToken}
-                        onChange={(e) => {
-                          setFigmaToken(e.target.value)
-                          setFigmaError(null)
-                        }}
-                        placeholder="Figma personal access token"
-                        className="h-9 bg-white font-mono text-sm"
-                      />
-                      <Button
-                        size="sm"
-                        onClick={handleImportFigmaFrames}
-                        disabled={figmaImporting}
-                        className="h-9 px-4"
-                      >
-                        {figmaImporting ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            가져오는 중
-                          </>
-                        ) : (
-                          '프레임 가져오기'
-                        )}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleClearFigmaToken}
-                        disabled={!figmaToken}
-                        className="h-9 px-3"
-                      >
-                        토큰 삭제
-                      </Button>
+                    <div className="mt-3 space-y-2">
+                      <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-900">
+                        여기에 넣는 값은 Figma 계정에서 발급한 <b>개인 액세스 토큰</b>입니다.
+                        Figma MCP 설정값이 아니며, 링크만으로 데모 테스트를 할 때는 비워도 됩니다.
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
+                        <Input
+                          type="password"
+                          value={figmaToken}
+                          onChange={(e) => {
+                            setFigmaToken(e.target.value)
+                            setFigmaError(null)
+                          }}
+                          placeholder="Figma 개인 액세스 토큰"
+                          className="h-9 bg-white font-mono text-sm"
+                        />
+                        <Button
+                          size="sm"
+                          onClick={handleImportFigmaFrames}
+                          disabled={figmaImporting}
+                          className="h-9 px-4"
+                        >
+                          {figmaImporting ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              가져오는 중
+                            </>
+                          ) : (
+                            '화면 이미지 가져오기'
+                          )}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleClearFigmaToken}
+                          disabled={!figmaToken}
+                          className="h-9 px-3"
+                        >
+                          저장된 토큰 삭제
+                        </Button>
+                      </div>
                     </div>
                   )}
 
@@ -729,15 +735,15 @@ export default function UploadStep({
                   <div className="space-y-4">
                     <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
                       <p className="text-xs font-semibold text-emerald-900">
-                        {hasFigmaFrameImages ? '프레임 가져오기 완료' : '링크 연결됨'}
+                        {hasFigmaFrameImages ? '화면 이미지 가져오기 완료' : '링크 연결됨'}
                       </p>
                       <p className="mt-1 break-all text-xs text-emerald-800">
                         {getFigmaSourceLabel(figmaSource)}
                       </p>
                       <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80">
                         {hasFigmaFrameImages
-                          ? `${frames.length}개 프레임을 테스트 소스로 가져왔습니다.`
-                          : '토큰 없이도 링크 메타데이터 기반 Demo AI 테스트는 진행할 수 있습니다.'}
+                          ? `${frames.length}개 화면 이미지를 테스트 소스로 가져왔습니다.`
+                          : '개인 액세스 토큰 없이도 Figma 링크 기반 Demo AI 테스트는 진행할 수 있습니다.'}
                       </p>
                     </div>
 
@@ -745,7 +751,7 @@ export default function UploadStep({
                       <div className="space-y-3">
                         {renderFrameGrid('single', frames, handleDeleteSingle, commitSingleEdit)}
                         <p className="text-xs text-gray-400">
-                          Figma 프레임 순서가 테스트 플로우 순서가 됩니다. 필요하면 카드를 드래그해 조정하세요.
+                          가져온 화면 순서가 테스트 플로우 순서가 됩니다. 필요하면 카드를 드래그해 조정하세요.
                         </p>
                       </div>
                     )}
@@ -755,7 +761,7 @@ export default function UploadStep({
                     <Link className="mx-auto mb-3 h-7 w-7 text-gray-300" />
                     <p className="text-sm font-medium text-gray-700">Figma 링크를 붙여넣으세요</p>
                     <p className="mt-1 text-xs text-gray-400">
-                      연결 후 API 키 없이 다음 단계로 넘어갈 수 있습니다.
+                      개인 액세스 토큰이나 API 키 없이도 다음 단계로 넘어갈 수 있습니다.
                     </p>
                   </div>
                 )}

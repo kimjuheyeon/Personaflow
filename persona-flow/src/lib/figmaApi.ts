@@ -51,7 +51,7 @@ async function fetchFigmaJson<T>(path: string, token: string): Promise<T> {
 
   if (!response.ok) {
     if (response.status === 403) {
-      throw new Error('Figma 토큰이 올바르지 않거나 파일 접근 권한이 없습니다.')
+      throw new Error('Figma 개인 액세스 토큰이 올바르지 않거나 파일 접근 권한이 없습니다.')
     }
     if (response.status === 404) {
       throw new Error('Figma 파일 또는 선택한 프레임을 찾지 못했습니다.')

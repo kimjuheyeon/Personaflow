@@ -159,7 +159,7 @@ export async function analyzeDesignDemo(
     taskMetrics: demoMetrics,
     overallSummary:
       sourceType === 'figma'
-        ? 'Demo AI Mode는 Figma 링크와 화면 메타데이터를 기준으로 빠른 UX 점검 결과를 생성했습니다. 실제 이미지 이해나 prototype reaction 자동 탐색은 아직 연결 전이므로, 이번 결과는 제품 흐름 검증용 초안으로 보는 것이 적절합니다. 다음 개발 단계에서는 Figma REST API 또는 MCP로 프레임 이미지와 연결 관계를 가져와 분석 정확도를 높이면 됩니다.'
+        ? 'Demo AI Mode는 Figma 링크와 화면 메타데이터를 기준으로 빠른 UX 점검 결과를 생성했습니다. 실제 화면 이미지 이해나 프로토타입 연결 자동 탐색은 아직 제한적이므로, 이번 결과는 제품 흐름 검증용 초안으로 보는 것이 적절합니다. 개인 액세스 토큰을 연결하면 Figma 프레임 이미지를 가져와 분석 정확도를 높일 수 있습니다.'
         : 'Demo AI Mode는 업로드된 화면 순서와 기본 UX 체크리스트를 기준으로 빠른 점검 결과를 생성했습니다. API 키 없이 즉시 제품 흐름을 확인하기 위한 모드이므로, 실제 화면 세부 분석은 Gemini 무료 키 연결 후 재실행하는 것이 좋습니다.',
     walkthrough: buildWalkthrough(frames, personas),
   }
