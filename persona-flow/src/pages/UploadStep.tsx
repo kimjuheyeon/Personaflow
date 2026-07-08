@@ -7,6 +7,7 @@ import {
   ImageIcon,
   KeyRound,
   Link,
+  Loader2,
   Pencil,
   Plus,
   Upload,
@@ -14,6 +15,12 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { importFigmaFrames } from '@/lib/figmaApi'
+import {
+  clearStoredFigmaToken,
+  getStoredFigmaToken,
+  storeFigmaToken,
+} from '@/lib/figmaAuth'
 import { createFigmaFrame, getFigmaSourceLabel, parseFigmaUrl } from '@/lib/figma'
 import {
   getFrameSecondaryLabel,
@@ -97,6 +104,8 @@ export default function UploadStep({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [figmaError, setFigmaError] = useState<string | null>(null)
+  const [figmaToken, setFigmaToken] = useState(() => getStoredFigmaToken())
+  const [figmaImporting, setFigmaImporting] = useState(false)
 
   const handleSourceTypeChange = (nextSourceType: SourceType) => {
     onSourceTypeChange(nextSourceType)
@@ -122,6 +131,39 @@ export default function UploadStep({
     onTestModeChange('single')
     onAiModeChange('demo')
     onFramesChange([createFigmaFrame(source)])
+  }
+
+  const handleImportFigmaFrames = async () => {
+    const source = parseFigmaUrl(figmaUrl)
+    if (!source) {
+      setFigmaError('Figma 파일, 디자인, 프로토타입 링크를 입력해주세요.')
+      onFigmaSourceChange(null)
+      return
+    }
+
+    setFigmaImporting(true)
+    setFigmaError(null)
+
+    try {
+      storeFigmaToken(figmaToken)
+      const imported = await importFigmaFrames(source, figmaToken)
+      onFigmaSourceChange(imported.source)
+      onSourceTypeChange('figma')
+      onTestModeChange('single')
+      onAiModeChange('demo')
+      onFramesChange(normalizeFrameOrder(imported.frames))
+    } catch (e) {
+      setFigmaError(e instanceof Error ? e.message : 'Figma 프레임을 가져오지 못했습니다.')
+      onFigmaSourceChange(source)
+      onFramesChange([createFigmaFrame(source)])
+    } finally {
+      setFigmaImporting(false)
+    }
+  }
+
+  const handleClearFigmaToken = () => {
+    clearStoredFigmaToken()
+    setFigmaToken('')
   }
 
   const processSingleFiles = useCallback(
@@ -594,7 +636,7 @@ export default function UploadStep({
           <div className="space-y-1">
             <h3 className="text-sm font-semibold text-gray-900">Figma 링크 연결</h3>
             <p className="text-xs text-gray-500">
-              파일, 프레임 선택, 프로토타입 링크를 붙여넣으면 테스트 소스로 저장합니다.
+              파일, 프레임 선택, 프로토타입 링크를 붙여넣고 토큰이 있으면 실제 프레임을 가져옵니다.
             </p>
           </div>
 
@@ -611,24 +653,79 @@ export default function UploadStep({
               placeholder="https://www.figma.com/design/..."
               className="h-9 text-sm"
             />
-            <Button size="sm" onClick={handleConnectFigma} className="px-4 flex-shrink-0">
-              연결
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleConnectFigma}
+              className="px-4 flex-shrink-0"
+            >
+              링크만 연결
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2">
+            <Input
+              type="password"
+              value={figmaToken}
+              onChange={(e) => {
+                setFigmaToken(e.target.value)
+                setFigmaError(null)
+              }}
+              placeholder="Figma personal access token"
+              className="h-9 text-sm font-mono"
+            />
+            <Button
+              size="sm"
+              onClick={handleImportFigmaFrames}
+              disabled={figmaImporting}
+              className="px-4"
+            >
+              {figmaImporting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  가져오는 중
+                </>
+              ) : (
+                '프레임 가져오기'
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClearFigmaToken}
+              disabled={!figmaToken}
+              className="px-3"
+            >
+              토큰 삭제
             </Button>
           </div>
 
           {figmaError && <p className="text-xs text-red-600">{figmaError}</p>}
 
           {figmaSource ? (
-            <div className="border border-green-200 bg-green-50 rounded-md p-3">
-              <p className="text-xs font-semibold text-green-800">연결됨</p>
-              <p className="text-xs text-green-700 mt-1 break-all">
-                {getFigmaSourceLabel(figmaSource)}
-              </p>
-              <p className="text-[11px] text-green-700/80 mt-2">
-                이번 단계에서는 Figma 링크와 version/node 메타데이터를 저장하고 Demo AI로
-                빠른 플로우 점검을 실행합니다. 실제 프레임 이미지와 prototype reaction 자동
-                수집은 다음 개발 단계에서 붙일 수 있게 구조를 열어두었습니다.
-              </p>
+            <div className="space-y-4">
+              <div className="border border-green-200 bg-green-50 rounded-md p-3">
+                <p className="text-xs font-semibold text-green-800">
+                  {frames.some((frame) => frame.imageUrl) ? '프레임 가져오기 완료' : '링크 연결됨'}
+                </p>
+                <p className="text-xs text-green-700 mt-1 break-all">
+                  {getFigmaSourceLabel(figmaSource)}
+                </p>
+                <p className="text-[11px] text-green-700/80 mt-2">
+                  {frames.some((frame) => frame.imageUrl)
+                    ? `${frames.length}개 프레임을 테스트 소스로 가져왔습니다. Demo AI 또는 Gemini 무료 키 모드로 다음 단계에서 분석할 수 있습니다.`
+                    : '토큰 없이도 링크 메타데이터 기반 Demo AI 테스트는 진행할 수 있습니다. 실제 화면 이미지를 가져오려면 Figma 토큰을 입력하세요.'}
+                </p>
+              </div>
+
+              {frames.length > 0 && (
+                <div className="space-y-3">
+                  {renderFrameGrid('single', frames, handleDeleteSingle, commitSingleEdit)}
+                  <p className="text-xs text-gray-400">
+                    Figma 프레임 순서가 테스트 플로우 순서가 됩니다. 필요하면 카드를 드래그해 순서를 조정하세요.
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <div className="border border-dashed border-gray-300 rounded-md py-10 text-center">
