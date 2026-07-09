@@ -60,6 +60,11 @@ const CRITERIA_OPTIONS = ['첫인상', '이해도', '전환 유도', '탐색 흐
 
 type DragScope = 'single' | VariantId
 type DraggedFrame = { scope: DragScope; frameId: string }
+type FigmaLinkRow = {
+  id: string
+  url: string
+  source: FigmaSource | null
+}
 
 function makeFrame(file: File, prefix: string): Frame {
   return {
@@ -119,6 +124,70 @@ function areVariantsEmpty(variants: DesignVariant[]): boolean {
   return variants.every((variant) => variant.frames.length === 0)
 }
 
+function makeFigmaLinkRow(url = '', source: FigmaSource | null = null): FigmaLinkRow {
+  return {
+    id: `figma-link-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    url,
+    source,
+  }
+}
+
+function getFigmaSourceKey(source: FigmaSource): string {
+  return [source.fileKey, source.nodeId ?? '', source.versionId ?? ''].join('|')
+}
+
+function getFigmaFrameKey(frame: Frame): string {
+  return [frame.figmaFileKey ?? '', frame.figmaNodeId ?? '', frame.figmaVersionId ?? ''].join('|')
+}
+
+function frameMatchesFigmaSource(frame: Frame, source: FigmaSource): boolean {
+  return frame.figmaUrl === source.url || getFigmaFrameKey(frame) === getFigmaSourceKey(source)
+}
+
+function getDistinctFigmaFrameRows(frames: Frame[]): FigmaLinkRow[] {
+  const seen = new Set<string>()
+  return frames
+    .filter((frame) => frame.sourceType === 'figma' && frame.figmaUrl && frame.figmaFileKey)
+    .flatMap((frame) => {
+      const key = getFigmaFrameKey(frame)
+      if (seen.has(key)) return []
+      seen.add(key)
+      return [
+        makeFigmaLinkRow(frame.figmaUrl ?? '', {
+          url: frame.figmaUrl ?? '',
+          fileKey: frame.figmaFileKey ?? '',
+          nodeId: frame.figmaNodeId,
+          versionId: frame.figmaVersionId,
+          fileName: frame.userLabel ?? frame.originalName,
+          selectionLabel: frame.originalName,
+          connectedAt: new Date(),
+        }),
+      ]
+    })
+}
+
+function ensureTrailingEmptyFigmaRow(rows: FigmaLinkRow[]): FigmaLinkRow[] {
+  const nextRows = rows.length > 0 ? rows : [makeFigmaLinkRow()]
+  const last = nextRows[nextRows.length - 1]
+  return last.url.trim() ? [...nextRows, makeFigmaLinkRow()] : nextRows
+}
+
+function buildInitialFigmaRows(
+  figmaUrl: string,
+  figmaSource: FigmaSource | null,
+  frames: Frame[]
+): FigmaLinkRow[] {
+  const rows = getDistinctFigmaFrameRows(frames)
+  if (rows.length > 0) return ensureTrailingEmptyFigmaRow(rows)
+  if (figmaSource) return ensureTrailingEmptyFigmaRow([makeFigmaLinkRow(figmaSource.url, figmaSource)])
+  if (figmaUrl.trim()) return ensureTrailingEmptyFigmaRow([makeFigmaLinkRow(figmaUrl)])
+  return [makeFigmaLinkRow()]
+}
+
+function getFilledFigmaRows(rows: FigmaLinkRow[]): FigmaLinkRow[] {
+  return rows.filter((row) => row.url.trim())
+}
+
 export default function UploadStep({
   frames,
   onFramesChange,
@@ -145,6 +214,9 @@ export default function UploadStep({
   const [figmaToken, setFigmaToken] = useState(() => getStoredFigmaToken())
   const [figmaImporting, setFigmaImporting] = useState(false)
   const [showFigmaAdvanced, setShowFigmaAdvanced] = useState(() => Boolean(getStoredFigmaToken()))
+  const [figmaLinkRows, setFigmaLinkRows] = useState<FigmaLinkRow[]>(() =>
+    buildInitialFigmaRows(figmaUrl, figmaSource, frames)
+  )
 
   const handleSourceTypeChange = (nextSourceType: SourceType) => {
     onSourceTypeChange(nextSourceType)
@@ -158,7 +230,7 @@ export default function UploadStep({
           onVariantsChange(splitFramesIntoVariants(figmaFrames, variants))
         }
       } else if (figmaSource) {
-        onFramesChange([createFigmaFrame(figmaSource)])
+        onFramesChange(normalizeFrameOrder([createFigmaFrame(figmaSource)]))
         if (testMode === 'ab') {
           onVariantsChange(variants.map((variant) => ({ ...variant, frames: [] })))
         }
@@ -194,29 +266,74 @@ export default function UploadStep({
     }
   }
 
-  const handleConnectFigma = () => {
-    const source = parseFigmaUrl(figmaUrl)
+  const handleFigmaRowUrlChange = (rowId: string, url: string) => {
+    const previousSource = figmaLinkRows.find((row) => row.id === rowId)?.source
+    setFigmaLinkRows((rows) =>
+      rows.map((row) => (row.id === rowId ? { ...row, url, source: null } : row))
+    )
+    if (previousSource) {
+      const nextSource =
+        figmaLinkRows.find((row) => row.id !== rowId && row.source)?.source ?? null
+      onFigmaSourceChange(nextSource)
+      onFramesChange(
+        normalizeFrameOrder(
+          frames.filter(
+            (frame) => frame.sourceType !== 'figma' || !frameMatchesFigmaSource(frame, previousSource)
+          )
+        )
+      )
+      onVariantsChange(
+        variants.map((variant) => ({
+          ...variant,
+          frames: normalizeFrameOrder(
+            variant.frames.filter((frame) => !frameMatchesFigmaSource(frame, previousSource))
+          ),
+        }))
+      )
+    }
+    onFigmaUrlChange(url)
+    setFigmaError(null)
+  }
+
+  const handleConnectFigma = (rowId: string) => {
+    const row = figmaLinkRows.find((item) => item.id === rowId)
+    const source = parseFigmaUrl(row?.url ?? '')
     if (!source) {
       setFigmaError('Figma 파일, 디자인, 프로토타입 링크를 입력해주세요.')
-      onFigmaSourceChange(null)
       return
     }
 
     setFigmaError(null)
     onFigmaSourceChange(source)
+    onFigmaUrlChange(source.url)
     onSourceTypeChange('figma')
     setShowFigmaAdvanced(true)
-    onFramesChange([createFigmaFrame(source)])
+    setFigmaLinkRows((rows) =>
+      ensureTrailingEmptyFigmaRow(
+        rows.map((item) => (item.id === rowId ? { ...item, url: source.url, source } : item))
+      )
+    )
+
+    const existingFigmaFrames = frames.filter((frame) => frame.sourceType === 'figma')
+    const nextSourceKey = getFigmaSourceKey(source)
+    const nextFrames = existingFigmaFrames.some((frame) => getFigmaFrameKey(frame) === nextSourceKey)
+      ? existingFigmaFrames
+      : [...existingFigmaFrames, createFigmaFrame(source)]
+    onFramesChange(normalizeFrameOrder(nextFrames))
     if (testMode === 'ab') {
       onVariantsChange(variants.map((variant) => ({ ...variant, frames: [] })))
     }
   }
 
   const handleImportFigmaFrames = async () => {
-    const source = parseFigmaUrl(figmaUrl)
-    if (!source) {
+    const filledRows = getFilledFigmaRows(figmaLinkRows)
+    const parsedRows = filledRows.map((row) => ({
+      row,
+      source: row.source ?? parseFigmaUrl(row.url),
+    }))
+    const invalidRow = parsedRows.find((item) => !item.source)
+    if (parsedRows.length === 0 || invalidRow) {
       setFigmaError('Figma 파일, 디자인, 프로토타입 링크를 입력해주세요.')
-      onFigmaSourceChange(null)
       return
     }
 
@@ -225,24 +342,63 @@ export default function UploadStep({
 
     try {
       storeFigmaToken(figmaToken)
-      const imported = await importFigmaFrames(source, figmaToken)
-      const importedFrames = normalizeFrameOrder(imported.frames)
-      onFigmaSourceChange(imported.source)
+      const importedList = await Promise.all(
+        parsedRows.map(({ source }) => importFigmaFrames(source as FigmaSource, figmaToken))
+      )
+      const importedFrames = normalizeFrameOrder(importedList.flatMap((imported) => imported.frames))
+      const primarySource = importedList[0]?.source ?? parsedRows[0].source
+      if (primarySource) {
+        onFigmaSourceChange(primarySource)
+        onFigmaUrlChange(primarySource.url)
+      }
       onSourceTypeChange('figma')
       onFramesChange(importedFrames)
+      setFigmaLinkRows((rows) =>
+        ensureTrailingEmptyFigmaRow(
+          rows.map((row) => {
+            const imported = importedList.find((item) => item.source.url === row.url.trim())
+            return imported ? { ...row, url: imported.source.url, source: imported.source } : row
+          })
+        )
+      )
       if (testMode === 'ab') {
         onVariantsChange(splitFramesIntoVariants(importedFrames, variants))
       }
     } catch (e) {
       setFigmaError(e instanceof Error ? e.message : 'Figma 화면 이미지를 가져오지 못했습니다.')
-      onFigmaSourceChange(source)
-      onFramesChange([createFigmaFrame(source)])
-      if (testMode === 'ab') {
-        onVariantsChange(variants.map((variant) => ({ ...variant, frames: [] })))
-      }
     } finally {
       setFigmaImporting(false)
     }
+  }
+
+  const handleRemoveFigmaLinkRow = (rowId: string) => {
+    const row = figmaLinkRows.find((item) => item.id === rowId)
+    const source = row?.source ?? null
+    const nextRows = ensureTrailingEmptyFigmaRow(
+      figmaLinkRows.filter((item) => item.id !== rowId)
+    )
+    setFigmaLinkRows(nextRows)
+
+    if (source) {
+      const nextFrames = normalizeFrameOrder(
+        frames.filter((frame) => frame.sourceType !== 'figma' || !frameMatchesFigmaSource(frame, source))
+      )
+      onFramesChange(nextFrames)
+      onVariantsChange(
+        variants.map((variant) => ({
+          ...variant,
+          frames: normalizeFrameOrder(
+            variant.frames.filter((frame) => !frameMatchesFigmaSource(frame, source))
+          ),
+        }))
+      )
+    }
+
+    const nextFilledRows = getFilledFigmaRows(nextRows)
+    const nextSource = nextFilledRows.find((item) => item.source)?.source ?? null
+    onFigmaSourceChange(nextSource)
+    onFigmaUrlChange(nextFilledRows[0]?.url ?? '')
+    setFigmaError(null)
   }
 
   const handleClearFigmaToken = () => {
@@ -479,6 +635,17 @@ export default function UploadStep({
 
   const variantA = variants.find((variant) => variant.id === 'A')
   const variantB = variants.find((variant) => variant.id === 'B')
+  const filledFigmaRows = getFilledFigmaRows(figmaLinkRows)
+  const connectedFigmaRows = figmaLinkRows.filter((row) => row.source)
+  const hasConnectedFigmaSource = connectedFigmaRows.length > 0 || Boolean(figmaSource)
+  const figmaConnectionLabel =
+    connectedFigmaRows.length > 1
+      ? `${connectedFigmaRows.length}개 Figma 링크 연결됨`
+      : figmaSource
+      ? getFigmaSourceLabel(figmaSource)
+      : connectedFigmaRows[0]?.source
+      ? getFigmaSourceLabel(connectedFigmaRows[0].source)
+      : 'Figma 연결됨'
   const figmaReadyFrames = frames.filter((frame) => frame.sourceType === 'figma' && hasFrameImage(frame))
   const hasFigmaFrameImages = sourceType === 'figma' && figmaReadyFrames.length > 0
   const abFrames = variants.flatMap((variant) => variant.frames)
@@ -487,10 +654,10 @@ export default function UploadStep({
   const canProceed =
     testMode === 'single'
       ? sourceType === 'figma'
-        ? Boolean(figmaSource && hasFigmaFrameImages && frames.every(hasFrameImage))
+        ? Boolean(hasConnectedFigmaSource && hasFigmaFrameImages && frames.every(hasFrameImage))
         : frames.length > 0
       : sourceType === 'figma'
-      ? Boolean(figmaSource && hasReadyABFrames)
+      ? Boolean(hasConnectedFigmaSource && hasReadyABFrames)
       : hasReadyABFrames
 
   const renderFrameGrid = (
@@ -892,26 +1059,53 @@ export default function UploadStep({
                 </div>
 
                 <div className="rounded-md border border-gray-200 bg-gray-50 p-3 sm:p-4">
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <Input
-                      value={figmaUrl}
-                      onChange={(e) => {
-                        onFigmaUrlChange(e.target.value)
-                        setFigmaError(null)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleConnectFigma()
-                      }}
-                      placeholder="Figma 링크 붙여넣기"
-                      className="h-11 bg-white text-sm"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={handleConnectFigma}
-                      className="h-11 px-5 text-sm"
-                    >
-                      링크 연결
-                    </Button>
+                  <div className="space-y-2">
+                    {figmaLinkRows.map((row, index) => {
+                      const isConnected = Boolean(row.source)
+                      const canRemove = figmaLinkRows.length > 1 || Boolean(row.url.trim())
+
+                      return (
+                        <div key={row.id} className="flex flex-col gap-2 sm:flex-row">
+                          <div className="relative flex-1">
+                            <Input
+                              value={row.url}
+                              onChange={(e) => handleFigmaRowUrlChange(row.id, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleConnectFigma(row.id)
+                              }}
+                              placeholder={`Figma 링크 ${index + 1}`}
+                              className="h-11 bg-white pr-20 text-sm"
+                            />
+                            {isConnected && (
+                              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-emerald-600">
+                                연결됨
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => handleConnectFigma(row.id)}
+                              disabled={!row.url.trim()}
+                              className="h-11 px-5 text-sm"
+                            >
+                              링크 연결
+                            </Button>
+                            {canRemove && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => handleRemoveFigmaLinkRow(row.id)}
+                                className="h-11 w-11"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
 
                   <button
@@ -947,7 +1141,7 @@ export default function UploadStep({
                         <Button
                           size="sm"
                           onClick={handleImportFigmaFrames}
-                          disabled={figmaImporting}
+                          disabled={figmaImporting || filledFigmaRows.length === 0}
                           className="h-9 px-4"
                         >
                           {figmaImporting ? (
@@ -956,7 +1150,7 @@ export default function UploadStep({
                               가져오는 중
                             </>
                           ) : (
-                            '화면 이미지 가져오기'
+                            `${filledFigmaRows.length || 0}개 링크 이미지 가져오기`
                           )}
                         </Button>
                         <Button
@@ -973,7 +1167,7 @@ export default function UploadStep({
                   )}
 
                   {figmaError && <p className="mt-3 text-xs text-red-600">{figmaError}</p>}
-                  {figmaSource && !hasFigmaFrameImages && (
+                  {hasConnectedFigmaSource && !hasFigmaFrameImages && (
                     <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
                       실제 AI 분석을 하려면 Figma 화면 이미지가 필요합니다. 위 영역에서
                       Figma 개인 액세스 토큰으로 화면 이미지를 먼저 가져오세요.
@@ -983,14 +1177,14 @@ export default function UploadStep({
 
                 <div>{renderTestModeControl()}</div>
 
-                {figmaSource ? (
+                {hasConnectedFigmaSource ? (
                   <div className="space-y-4">
                     <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
                       <p className="text-xs font-semibold text-emerald-900">
                         {hasFigmaFrameImages ? '화면 이미지 가져오기 완료' : '링크 연결됨'}
                       </p>
                       <p className="mt-1 break-all text-xs text-emerald-800">
-                        {getFigmaSourceLabel(figmaSource)}
+                        {figmaConnectionLabel}
                       </p>
                       <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80">
                         {hasFigmaFrameImages
