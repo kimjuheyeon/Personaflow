@@ -224,7 +224,7 @@ export default function PersonaStep({
                     <div
                       key={persona.id}
                       onClick={() => toggleSelect(persona.id)}
-                      className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                      className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${
                         idx !== 0 ? 'border-t border-gray-100' : ''
                       } ${isSelected ? 'bg-blue-50' : 'bg-white hover:bg-gray-50'}`}
                     >
@@ -232,7 +232,7 @@ export default function PersonaStep({
                       <div
                         className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
                           isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300'
-                        }`}
+                        } mt-0.5`}
                       >
                         {isSelected && <Check className="w-3 h-3 text-white" />}
                       </div>
@@ -256,13 +256,13 @@ export default function PersonaStep({
                       </div>
 
                       {/* 목표 */}
-                      <div className="flex-1 text-xs text-gray-600 truncate">
+                      <div className="min-w-0 flex-1 text-xs leading-relaxed text-gray-600 whitespace-normal break-words">
                         {persona.goal}
                       </div>
 
                       {/* AI 배지 */}
                       {persona.isAiGenerated && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium flex-shrink-0">
+                        <span className="mt-0.5 text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium flex-shrink-0">
                           AI
                         </span>
                       )}
