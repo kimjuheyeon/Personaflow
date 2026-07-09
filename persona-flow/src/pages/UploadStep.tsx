@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react'
 import {
-  Bot,
   ChevronDown,
   Check,
   GitCompare,
@@ -31,7 +30,6 @@ import {
 } from '@/lib/frameNaming'
 import type {
   ABTestConfig,
-  AIMode,
   DesignVariant,
   FigmaSource,
   Frame,
@@ -49,8 +47,6 @@ interface UploadStepProps {
   onFigmaUrlChange: (url: string) => void
   figmaSource: FigmaSource | null
   onFigmaSourceChange: (source: FigmaSource | null) => void
-  aiMode: AIMode
-  onAiModeChange: (mode: AIMode) => void
   testMode: TestMode
   onTestModeChange: (mode: TestMode) => void
   variants: DesignVariant[]
@@ -81,6 +77,48 @@ function isValidImage(file: File) {
   return ['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)
 }
 
+function hasFrameImage(frame: Frame): boolean {
+  return Boolean(frame.file || frame.imageUrl)
+}
+
+function getFrameAssignmentKey(frame: Frame): string {
+  return frame.figmaNodeId ?? frame.figmaUrl ?? frame.id
+}
+
+function cloneFrameForVariant(frame: Frame, variantId: VariantId, index: number): Frame {
+  return {
+    ...frame,
+    id: `${variantId}-${getFrameAssignmentKey(frame)}-${index}`,
+    flowOrder: index + 1,
+  }
+}
+
+function splitFramesIntoVariants(
+  sourceFrames: Frame[],
+  currentVariants: DesignVariant[]
+): DesignVariant[] {
+  const readyFrames = sourceFrames.filter(hasFrameImage)
+  const splitIndex = Math.max(1, Math.ceil(readyFrames.length / 2))
+
+  return currentVariants.map((variant) => {
+    const nextFrames =
+      variant.id === 'A'
+        ? readyFrames.slice(0, splitIndex)
+        : readyFrames.slice(splitIndex)
+
+    return {
+      ...variant,
+      frames: normalizeFrameOrder(
+        nextFrames.map((frame, index) => cloneFrameForVariant(frame, variant.id, index))
+      ),
+    }
+  })
+}
+
+function areVariantsEmpty(variants: DesignVariant[]): boolean {
+  return variants.every((variant) => variant.frames.length === 0)
+}
+
 export default function UploadStep({
   frames,
   onFramesChange,
@@ -90,8 +128,6 @@ export default function UploadStep({
   onFigmaUrlChange,
   figmaSource,
   onFigmaSourceChange,
-  aiMode,
-  onAiModeChange,
   testMode,
   onTestModeChange,
   variants,
@@ -108,17 +144,53 @@ export default function UploadStep({
   const [figmaError, setFigmaError] = useState<string | null>(null)
   const [figmaToken, setFigmaToken] = useState(() => getStoredFigmaToken())
   const [figmaImporting, setFigmaImporting] = useState(false)
-  const [showFigmaAdvanced, setShowFigmaAdvanced] = useState(
-    () => Boolean(getStoredFigmaToken()) || aiMode === 'gemini_free'
-  )
+  const [showFigmaAdvanced, setShowFigmaAdvanced] = useState(() => Boolean(getStoredFigmaToken()))
 
   const handleSourceTypeChange = (nextSourceType: SourceType) => {
     onSourceTypeChange(nextSourceType)
     setFigmaError(null)
     if (nextSourceType === 'figma') {
-      onTestModeChange('single')
-      if (aiMode === 'gemini_free') setShowFigmaAdvanced(true)
-      if (figmaSource) onFramesChange([createFigmaFrame(figmaSource)])
+      setShowFigmaAdvanced(true)
+      const figmaFrames = frames.filter((frame) => frame.sourceType === 'figma')
+      if (figmaFrames.length > 0) {
+        onFramesChange(normalizeFrameOrder(figmaFrames))
+        if (testMode === 'ab') {
+          onVariantsChange(splitFramesIntoVariants(figmaFrames, variants))
+        }
+      } else if (figmaSource) {
+        onFramesChange([createFigmaFrame(figmaSource)])
+        if (testMode === 'ab') {
+          onVariantsChange(variants.map((variant) => ({ ...variant, frames: [] })))
+        }
+      }
+    } else {
+      const imageFrames = frames.filter((frame) => frame.sourceType !== 'figma')
+      if (imageFrames.length !== frames.length) {
+        onFramesChange(normalizeFrameOrder(imageFrames))
+      }
+      onVariantsChange(
+        variants.map((variant) => ({
+          ...variant,
+          frames: normalizeFrameOrder(
+            variant.frames.filter((frame) => frame.sourceType !== 'figma')
+          ),
+        }))
+      )
+    }
+  }
+
+  const handleTestModeChange = (nextMode: TestMode) => {
+    onTestModeChange(nextMode)
+    const hasFigmaAssignments = variants.some((variant) =>
+      variant.frames.some((frame) => frame.sourceType === 'figma')
+    )
+    if (
+      sourceType === 'figma' &&
+      nextMode === 'ab' &&
+      (!hasFigmaAssignments || areVariantsEmpty(variants)) &&
+      frames.some(hasFrameImage)
+    ) {
+      onVariantsChange(splitFramesIntoVariants(frames, variants))
     }
   }
 
@@ -133,9 +205,11 @@ export default function UploadStep({
     setFigmaError(null)
     onFigmaSourceChange(source)
     onSourceTypeChange('figma')
-    onTestModeChange('single')
-    if (aiMode === 'gemini_free') setShowFigmaAdvanced(true)
+    setShowFigmaAdvanced(true)
     onFramesChange([createFigmaFrame(source)])
+    if (testMode === 'ab') {
+      onVariantsChange(variants.map((variant) => ({ ...variant, frames: [] })))
+    }
   }
 
   const handleImportFigmaFrames = async () => {
@@ -152,14 +226,20 @@ export default function UploadStep({
     try {
       storeFigmaToken(figmaToken)
       const imported = await importFigmaFrames(source, figmaToken)
+      const importedFrames = normalizeFrameOrder(imported.frames)
       onFigmaSourceChange(imported.source)
       onSourceTypeChange('figma')
-      onTestModeChange('single')
-      onFramesChange(normalizeFrameOrder(imported.frames))
+      onFramesChange(importedFrames)
+      if (testMode === 'ab') {
+        onVariantsChange(splitFramesIntoVariants(importedFrames, variants))
+      }
     } catch (e) {
       setFigmaError(e instanceof Error ? e.message : 'Figma 화면 이미지를 가져오지 못했습니다.')
       onFigmaSourceChange(source)
       onFramesChange([createFigmaFrame(source)])
+      if (testMode === 'ab') {
+        onVariantsChange(variants.map((variant) => ({ ...variant, frames: [] })))
+      }
     } finally {
       setFigmaImporting(false)
     }
@@ -380,17 +460,38 @@ export default function UploadStep({
     })
   }
 
+  const assignFigmaFrameToVariant = (variantId: VariantId, frame: Frame) => {
+    const variant = variants.find((item) => item.id === variantId)
+    if (!variant || !hasFrameImage(frame)) return
+
+    const sourceKey = getFrameAssignmentKey(frame)
+    if (variant.frames.some((item) => getFrameAssignmentKey(item) === sourceKey)) return
+
+    updateVariantFrames(variantId, [
+      ...variant.frames,
+      cloneFrameForVariant(frame, variantId, variant.frames.length),
+    ])
+  }
+
+  const resetFigmaVariantSplit = () => {
+    onVariantsChange(splitFramesIntoVariants(frames, variants))
+  }
+
   const variantA = variants.find((variant) => variant.id === 'A')
   const variantB = variants.find((variant) => variant.id === 'B')
-  const hasFigmaFrameImages = sourceType === 'figma' && frames.some((frame) => frame.imageUrl)
+  const figmaReadyFrames = frames.filter((frame) => frame.sourceType === 'figma' && hasFrameImage(frame))
+  const hasFigmaFrameImages = sourceType === 'figma' && figmaReadyFrames.length > 0
+  const abFrames = variants.flatMap((variant) => variant.frames)
+  const hasABFrames = Boolean(variantA?.frames.length && variantB?.frames.length)
+  const hasReadyABFrames = hasABFrames && abFrames.every(hasFrameImage)
   const canProceed =
-    sourceType === 'figma'
-      ? aiMode === 'gemini_free'
-        ? Boolean(figmaSource && hasFigmaFrameImages)
-        : Boolean(figmaSource)
-      : testMode === 'single'
-      ? frames.length > 0
-      : Boolean(variantA?.frames.length && variantB?.frames.length)
+    testMode === 'single'
+      ? sourceType === 'figma'
+        ? Boolean(figmaSource && hasFigmaFrameImages && frames.every(hasFrameImage))
+        : frames.length > 0
+      : sourceType === 'figma'
+      ? Boolean(figmaSource && hasReadyABFrames)
+      : hasReadyABFrames
 
   const renderFrameGrid = (
     scope: DragScope,
@@ -481,37 +582,42 @@ export default function UploadStep({
 
   const renderAiModeControl = () => (
     <div className="rounded-md border border-gray-200 bg-white p-3">
-      <p className="text-xs font-semibold text-gray-900">실행 모드</p>
-      <p className="mt-0.5 text-[11px] leading-relaxed text-gray-500">
-        실제 AI 분석은 화면 이미지와 Gemini 무료 API 키가 필요합니다.
-      </p>
-      <div className="mt-3 grid grid-cols-2 rounded-md border border-gray-200 bg-gray-50 p-0.5">
-        <button
-          onClick={() => onAiModeChange('demo')}
-          className={`flex items-center justify-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-            aiMode === 'demo'
-              ? 'bg-white text-gray-900 shadow-sm'
-              : 'text-gray-500 hover:text-gray-800'
-          }`}
-        >
-            <Bot className="h-3.5 w-3.5" />
-          샘플
-        </button>
-        <button
-          onClick={() => {
-            onAiModeChange('gemini_free')
-            if (sourceType === 'figma') setShowFigmaAdvanced(true)
-          }}
-          className={`flex items-center justify-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-            aiMode === 'gemini_free'
-              ? 'bg-white text-gray-900 shadow-sm'
-              : 'text-gray-500 hover:text-gray-800'
-          }`}
-        >
-          <KeyRound className="h-3.5 w-3.5" />
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold text-gray-900">실행 모드</p>
+        <span className="inline-flex items-center gap-1.5 rounded bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white">
+          <KeyRound className="h-3 w-3" />
           실제 AI
-        </button>
+        </span>
       </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
+        Gemini 무료 API 키와 실제 화면 이미지로 페르소나 테스트를 실행합니다.
+      </p>
+    </div>
+  )
+
+  const renderTestModeControl = () => (
+    <div className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-0.5">
+      <button
+        onClick={() => handleTestModeChange('single')}
+        className={`rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
+          testMode === 'single'
+            ? 'bg-white text-gray-900 shadow-sm'
+            : 'text-gray-500 hover:text-gray-800'
+        }`}
+      >
+        단일 시안
+      </button>
+      <button
+        onClick={() => handleTestModeChange('ab')}
+        className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
+          testMode === 'ab'
+            ? 'bg-white text-gray-900 shadow-sm'
+            : 'text-gray-500 hover:text-gray-800'
+        }`}
+      >
+        <GitCompare className="h-3.5 w-3.5" />
+        A/B 비교
+      </button>
     </div>
   )
 
@@ -613,6 +719,139 @@ export default function UploadStep({
     </div>
   )
 
+  const renderFigmaVariantPane = (variant: DesignVariant) => (
+    <div key={variant.id} className="border border-gray-200 rounded-md bg-white p-4 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">{variant.name}</h3>
+          <p className="text-xs text-gray-500 mt-0.5">{variant.frames.length}개 화면</p>
+        </div>
+        <span
+          className={`text-xs px-2 py-1 rounded font-semibold ${
+            variant.id === 'A' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
+          }`}
+        >
+          {variant.id}안
+        </span>
+      </div>
+
+      {variant.frames.length === 0 ? (
+        <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 text-center">
+          <p className="text-xs leading-relaxed text-gray-400">
+            가져온 Figma 화면에서 {variant.id}안에 넣을 화면을 선택하세요.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {renderFrameGrid(
+            variant.id,
+            variant.frames,
+            (id) => handleDeleteVariant(variant.id, id),
+            (id) => commitVariantEdit(variant.id, id)
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  const renderFigmaABBuilder = () => {
+    if (figmaReadyFrames.length === 0) {
+      return (
+        <div className="rounded-md border border-dashed border-gray-300 bg-gray-50 p-6 text-center">
+          <GitCompare className="mx-auto mb-3 h-7 w-7 text-gray-300" />
+          <p className="text-sm font-medium text-gray-700">A/B 비교용 화면 이미지가 필요합니다</p>
+          <p className="mt-1 text-xs text-gray-400">
+            Figma 개인 액세스 토큰으로 화면 이미지를 가져온 뒤 A안과 B안에 배정하세요.
+          </p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-4">
+        <div className="rounded-md border border-gray-200 bg-white p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-900">가져온 Figma 화면</p>
+              <p className="mt-0.5 text-xs text-gray-500">
+                각 화면을 A안 또는 B안에 추가해 비교 흐름을 구성하세요.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={resetFigmaVariantSplit}
+              className="h-8"
+            >
+              자동 배정
+            </Button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {figmaReadyFrames.map((frame) => {
+              const frameKey = getFrameAssignmentKey(frame)
+              const assignedA = Boolean(
+                variantA?.frames.some((item) => getFrameAssignmentKey(item) === frameKey)
+              )
+              const assignedB = Boolean(
+                variantB?.frames.some((item) => getFrameAssignmentKey(item) === frameKey)
+              )
+
+              return (
+                <div key={frame.id} className="rounded-md border border-gray-200 bg-gray-50 p-2">
+                  <div className="aspect-video overflow-hidden rounded bg-white">
+                    <img src={frame.imageUrl} alt={frame.name} className="h-full w-full object-cover" />
+                  </div>
+                  <div className="mt-2 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold text-gray-800">{frame.name}</p>
+                      {getFrameSecondaryLabel(frame) && (
+                        <p className="mt-0.5 truncate text-[10px] text-gray-400">
+                          {getFrameSecondaryLabel(frame)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-shrink-0 gap-1">
+                      <Button
+                        type="button"
+                        variant={assignedA ? 'secondary' : 'outline'}
+                        size="sm"
+                        onClick={() => assignFigmaFrameToVariant('A', frame)}
+                        disabled={assignedA}
+                        className="h-7 px-2 text-xs"
+                      >
+                        A
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={assignedB ? 'secondary' : 'outline'}
+                        size="sm"
+                        onClick={() => assignFigmaFrameToVariant('B', frame)}
+                        disabled={assignedB}
+                        className="h-7 px-2 text-xs"
+                      >
+                        B
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {variants.map(renderFigmaVariantPane)}
+        </div>
+
+        <p className="text-xs text-gray-400">
+          각 안의 카드 순서가 페르소나가 이동하는 화면 순서입니다. A안과 B안 모두 최소 1개 이상의 화면이 필요합니다.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-6xl space-y-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -624,7 +863,7 @@ export default function UploadStep({
             어떤 디자인을 테스트할까요?
           </h2>
           <p className="mt-1 text-sm text-gray-500">
-            Figma 링크를 연결한 뒤 샘플 리포트 또는 실제 AI 분석을 선택하세요.
+            Figma 또는 이미지 화면으로 실제 AI 페르소나 테스트를 준비하세요.
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
@@ -684,9 +923,7 @@ export default function UploadStep({
                         showFigmaAdvanced ? 'rotate-180' : ''
                       }`}
                     />
-                    {aiMode === 'gemini_free'
-                      ? '실제 AI용 Figma 화면 이미지 가져오기'
-                      : '비공개 Figma 화면 이미지 가져오기 (샘플은 선택)'}
+                    실제 AI용 Figma 화면 이미지 가져오기
                   </button>
 
                   {showFigmaAdvanced && (
@@ -694,9 +931,7 @@ export default function UploadStep({
                       <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-900">
                         여기에 넣는 값은 Figma 계정에서 발급한 <b>개인 액세스 토큰</b>입니다.
                         Codex나 Figma 플러그인 설정값이 아닙니다.
-                        {aiMode === 'gemini_free'
-                          ? ' 실제 AI가 화면을 읽으려면 이 토큰으로 Figma 화면 이미지를 가져와야 합니다.'
-                          : ' 샘플 리포트를 만들 때는 비워도 됩니다.'}
+                        실제 AI가 화면을 읽으려면 이 토큰으로 Figma 화면 이미지를 가져와야 합니다.
                       </div>
                       <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
                         <Input
@@ -738,13 +973,15 @@ export default function UploadStep({
                   )}
 
                   {figmaError && <p className="mt-3 text-xs text-red-600">{figmaError}</p>}
-                  {figmaSource && aiMode === 'gemini_free' && !hasFigmaFrameImages && (
+                  {figmaSource && !hasFigmaFrameImages && (
                     <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
                       실제 AI 분석을 하려면 Figma 화면 이미지가 필요합니다. 위 영역에서
                       Figma 개인 액세스 토큰으로 화면 이미지를 먼저 가져오세요.
                     </div>
                   )}
                 </div>
+
+                <div>{renderTestModeControl()}</div>
 
                 {figmaSource ? (
                   <div className="space-y-4">
@@ -757,20 +994,22 @@ export default function UploadStep({
                       </p>
                       <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80">
                         {hasFigmaFrameImages
-                          ? `${frames.length}개 화면 이미지를 테스트 소스로 가져왔습니다.`
-                          : aiMode === 'gemini_free'
-                          ? '실제 AI 분석은 아직 실행할 수 없습니다. 위에서 Figma 화면 이미지를 먼저 가져오세요.'
-                          : '개인 액세스 토큰 없이도 Figma 링크 기반 샘플 리포트는 만들 수 있습니다.'}
+                          ? `${figmaReadyFrames.length}개 화면 이미지를 테스트 소스로 가져왔습니다.`
+                          : '실제 AI 분석은 아직 실행할 수 없습니다. 위에서 Figma 화면 이미지를 먼저 가져오세요.'}
                       </p>
                     </div>
 
-                    {frames.length > 0 && (
-                      <div className="space-y-3">
-                        {renderFrameGrid('single', frames, handleDeleteSingle, commitSingleEdit)}
-                        <p className="text-xs text-gray-400">
-                          가져온 화면 순서가 테스트 플로우 순서가 됩니다. 필요하면 카드를 드래그해 조정하세요.
-                        </p>
-                      </div>
+                    {testMode === 'single' ? (
+                      frames.length > 0 && (
+                        <div className="space-y-3">
+                          {renderFrameGrid('single', frames, handleDeleteSingle, commitSingleEdit)}
+                          <p className="text-xs text-gray-400">
+                            가져온 화면 순서가 테스트 플로우 순서가 됩니다. 필요하면 카드를 드래그해 조정하세요.
+                          </p>
+                        </div>
+                      )
+                    ) : (
+                      renderFigmaABBuilder()
                     )}
                   </div>
                 ) : (
@@ -778,9 +1017,7 @@ export default function UploadStep({
                     <Link className="mx-auto mb-3 h-7 w-7 text-gray-300" />
                     <p className="text-sm font-medium text-gray-700">Figma 링크를 붙여넣으세요</p>
                     <p className="mt-1 text-xs text-gray-400">
-                      {aiMode === 'gemini_free'
-                        ? '실제 AI 분석은 Figma 화면 이미지와 Gemini 무료 API 키가 필요합니다.'
-                        : '개인 액세스 토큰이나 API 키 없이도 다음 단계로 넘어갈 수 있습니다.'}
+                      실제 AI 분석은 Figma 화면 이미지와 Gemini 무료 API 키가 필요합니다.
                     </p>
                   </div>
                 )}
@@ -801,29 +1038,7 @@ export default function UploadStep({
                   </div>
                 </div>
 
-                <div className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-0.5">
-                  <button
-                    onClick={() => onTestModeChange('single')}
-                    className={`rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      testMode === 'single'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-800'
-                    }`}
-                  >
-                    단일 시안
-                  </button>
-                  <button
-                    onClick={() => onTestModeChange('ab')}
-                    className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      testMode === 'ab'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-800'
-                    }`}
-                  >
-                    <GitCompare className="h-3.5 w-3.5" />
-                    A/B 비교
-                  </button>
-                </div>
+                <div>{renderTestModeControl()}</div>
 
                 {testMode === 'single' ? (
                   <div className="space-y-4">
@@ -937,7 +1152,7 @@ export default function UploadStep({
                   Figma 연결
                 </span>
                 <span className="mt-1 block text-xs text-gray-500">
-                  링크만으로 샘플 리포트 생성
+                  화면 이미지 가져오기
                 </span>
               </button>
               <button
@@ -972,13 +1187,13 @@ export default function UploadStep({
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-gray-500">실행</dt>
                   <dd className="font-medium text-gray-900">
-                    {aiMode === 'demo' ? '샘플 리포트' : '실제 AI 분석'}
+                    실제 AI 분석
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-gray-500">화면</dt>
                   <dd className="font-medium text-gray-900">
-                    {sourceType === 'image' && testMode === 'ab'
+                    {testMode === 'ab'
                       ? variants.reduce((sum, variant) => sum + variant.frames.length, 0)
                       : frames.length}
                     개

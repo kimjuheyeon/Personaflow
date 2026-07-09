@@ -10,9 +10,8 @@ import {
   SelectItem,
   SelectValue,
 } from '@/components/ui/select'
-import { suggestDemoPersonas } from '@/lib/ai/demo'
 import { suggestPersonas } from '@/lib/ai/gemini'
-import type { AIMode, PersonaConfig, DigitalLevel, DeviceType, Frame, SourceType } from '@/types'
+import type { PersonaConfig, DigitalLevel, DeviceType, Frame } from '@/types'
 
 interface PersonaStepProps {
   personas: PersonaConfig[]
@@ -20,8 +19,6 @@ interface PersonaStepProps {
   onNext: () => void
   onBack: () => void
   frames: Frame[]
-  sourceType: SourceType
-  aiMode: AIMode
   apiKey: string
   model: string
   onRequireKey: () => void
@@ -64,33 +61,18 @@ export default function PersonaStep({
   onNext,
   onBack,
   frames,
-  sourceType,
-  aiMode,
   apiKey,
   model,
   onRequireKey,
 }: PersonaStepProps) {
-  const initialDemoPersonas = suggestDemoPersonas(sourceType)
   const [activeTab, setActiveTab] = useState<'ai' | 'manual'>('ai')
-  const [aiPersonas, setAiPersonas] = useState<PersonaConfig[]>(
-    aiMode === 'demo' ? initialDemoPersonas : []
-  )
+  const [aiPersonas, setAiPersonas] = useState<PersonaConfig[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    new Set((aiMode === 'demo' ? initialDemoPersonas : []).map((p) => p.id))
-  )
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [form, setForm] = useState(EMPTY_FORM)
 
   const handleAiRecommend = async () => {
-    if (aiMode === 'demo') {
-      const list = suggestDemoPersonas(sourceType)
-      setAiPersonas(list)
-      setSelectedIds(new Set(list.map((p) => p.id)))
-      setError(null)
-      return
-    }
-
     if (!apiKey) {
       onRequireKey()
       return
@@ -201,15 +183,13 @@ export default function PersonaStep({
             <div className="py-12 border border-gray-200 rounded-md bg-white text-center space-y-3">
               <p className="text-sm text-gray-600 font-medium">AI가 최적의 페르소나를 추천합니다</p>
               <p className="text-xs text-gray-400">
-                {aiMode === 'demo'
-                  ? '샘플 테스트용 페르소나가 자동으로 준비됩니다'
-                  : '가져온 화면 이미지를 Gemini가 보고 사용자 유형을 제안합니다'}
+                가져온 화면 이미지를 Gemini가 보고 사용자 유형을 제안합니다
               </p>
               {error && (
                 <p className="text-xs text-red-600 max-w-md mx-auto leading-relaxed px-4">{error}</p>
               )}
               <Button onClick={handleAiRecommend} size="sm">
-                {aiMode === 'demo' ? '샘플 페르소나 다시 준비' : 'AI 페르소나 추천받기'}
+                AI 페르소나 추천받기
               </Button>
             </div>
           )}
@@ -232,7 +212,7 @@ export default function PersonaStep({
                   onClick={handleAiRecommend}
                   className="text-xs text-blue-600 hover:text-blue-700 font-medium"
                 >
-                  {aiMode === 'demo' ? '샘플 페르소나 다시 준비' : '다시 추천받기'}
+                  다시 추천받기
                 </button>
               </div>
 

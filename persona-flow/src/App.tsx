@@ -60,7 +60,6 @@ function Sidebar({
   onReset,
   hasKey,
   model,
-  aiMode,
   onOpenKey,
   history,
   currentReportId,
@@ -70,7 +69,6 @@ function Sidebar({
   onReset: () => void
   hasKey: boolean
   model: string
-  aiMode: AIMode
   onOpenKey: () => void
   history: TestReport[]
   currentReportId?: string
@@ -221,19 +219,17 @@ function Sidebar({
         >
           <span
             className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              aiMode === 'demo' || hasKey ? 'bg-green-400' : 'bg-red-400'
+              hasKey ? 'bg-green-400' : 'bg-red-400'
             }`}
           />
           <span className="flex-1 text-left truncate">
-            {aiMode === 'demo'
-              ? '샘플 리포트 모드'
-              : hasKey
+            {hasKey
               ? '실제 AI 연결됨'
               : 'Gemini 키 미설정'}
           </span>
           <span className="text-slate-500">⚙</span>
         </button>
-        {aiMode === 'gemini_free' && hasKey && (
+        {hasKey && (
           <p className="px-3 pt-1 text-[10px] text-slate-600 truncate">{modelLabel}</p>
         )}
       </div>
@@ -309,7 +305,7 @@ function App() {
   const [sourceType, setSourceType] = useState<SourceType>('figma')
   const [figmaUrl, setFigmaUrl] = useState('')
   const [figmaSource, setFigmaSource] = useState<FigmaSource | null>(null)
-  const [aiMode, setAiMode] = useState<AIMode>('demo')
+  const [aiMode, setAiMode] = useState<AIMode>('gemini_free')
   const [frames, setFrames] = useState<Frame[]>([])
   const [variants, setVariants] = useState<DesignVariant[]>(() => createDefaultVariants())
   const [abConfig, setAbConfig] = useState<ABTestConfig>(() => createDefaultABConfig())
@@ -326,7 +322,7 @@ function App() {
     setSourceType('figma')
     setFigmaUrl('')
     setFigmaSource(null)
-    setAiMode('demo')
+    setAiMode('gemini_free')
     setFrames([])
     setVariants(createDefaultVariants())
     setAbConfig(createDefaultABConfig())
@@ -409,7 +405,6 @@ function App() {
         onReset={resetAll}
         hasKey={hasKey}
         model={model}
-        aiMode={aiMode}
         onOpenKey={() => setKeyModalOpen(true)}
         history={history}
         currentReportId={report?.id}
@@ -437,8 +432,6 @@ function App() {
               onFigmaUrlChange={setFigmaUrl}
               figmaSource={figmaSource}
               onFigmaSourceChange={setFigmaSource}
-              aiMode={aiMode}
-              onAiModeChange={setAiMode}
               testMode={testMode}
               onTestModeChange={setTestMode}
               variants={variants}
@@ -455,8 +448,6 @@ function App() {
               onNext={handlePersonaNext}
               onBack={handlePersonaBack}
               frames={activeFrames}
-              sourceType={sourceType}
-              aiMode={aiMode}
               apiKey={apiKey}
               model={model}
               onRequireKey={() => setKeyModalOpen(true)}

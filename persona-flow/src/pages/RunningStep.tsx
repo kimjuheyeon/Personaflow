@@ -57,14 +57,18 @@ function buildProjectName(
   sourceType: SourceType,
   figmaSource: FigmaSource | null
 ): string {
+  if (testMode === 'ab') {
+    const goal = abConfig.goal.trim()
+    if (sourceType === 'figma') {
+      const label = goal || figmaSource?.fileName || 'Figma'
+      return `Figma A/B 테스트 · ${label}`
+    }
+    return goal ? `A/B 테스트 · ${goal}` : '화면 A/B 테스트'
+  }
   if (sourceType === 'figma') {
     return figmaSource?.fileName
       ? `Figma 플로우 · ${figmaSource.fileName}`
       : 'Figma 플로우 테스트'
-  }
-  if (testMode === 'ab') {
-    const goal = abConfig.goal.trim()
-    return goal ? `A/B 테스트 · ${goal}` : '화면 A/B 테스트'
   }
   if (frames.length === 0) return '시안 분석'
   if (frames.length === 1) return getFrameProjectLabel(frames[0])
@@ -108,7 +112,10 @@ export default function RunningStep({
 
     const targetFrames =
       testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
-    if (aiMode === 'gemini_free' && !targetFrames.some(hasFrameImage)) {
+    if (
+      aiMode === 'gemini_free' &&
+      (targetFrames.length === 0 || !targetFrames.every(hasFrameImage))
+    ) {
       setError(
         '실제 AI 분석에는 화면 이미지가 필요합니다. Figma 개인 액세스 토큰으로 화면 이미지를 가져오거나 PNG/JPG 이미지를 업로드한 뒤 다시 실행하세요.'
       )
@@ -250,8 +257,6 @@ export default function RunningStep({
             <p className="text-xs text-gray-500">
               {isDone
                 ? '리포트를 불러오는 중입니다...'
-                : aiMode === 'demo'
-                ? '샘플 리포트를 생성하고 있습니다'
                 : '페르소나가 시안을 직접 사용하며 UX를 분석하고 있습니다'}
             </p>
           </div>
@@ -355,8 +360,8 @@ export default function RunningStep({
 
         <p className="text-xs text-gray-400 text-center">
           {testMode === 'ab'
-            ? `${aiMode === 'demo' ? '샘플 모드' : 'Gemini'}가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다`
-            : `${aiMode === 'demo' ? '샘플 모드' : 'Gemini'}가 각 페르소나 관점에서 6축 UX 기준을 평가합니다`}
+            ? 'Gemini가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
+            : 'Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
         </p>
       </div>
     </div>
