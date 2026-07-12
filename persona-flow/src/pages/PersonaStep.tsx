@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Loader2, Plus, X, Check } from 'lucide-react'
+import { ArrowRight, Check, Loader2, Plus, Sparkles, UserRound, Users, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -151,23 +151,32 @@ export default function PersonaStep({
       : personas.length
 
   return (
-    <div className="max-w-3xl space-y-5">
-      <div>
-        <h2 className="text-base font-semibold text-gray-900">페르소나 설정</h2>
-        <p className="text-xs text-gray-500 mt-0.5">테스트할 사용자 유형을 설정하세요.</p>
+    <div className="mx-auto max-w-[980px] space-y-8">
+      <div className="flex items-end justify-between gap-6">
+        <div>
+          <p className="text-sm font-medium text-blue-500">테스트 대상 정의</p>
+          <h2 className="mt-2 text-[34px] font-semibold leading-tight tracking-[-0.025em] text-gray-950">
+            누구의 관점으로 테스트할까요?
+          </h2>
+          <p className="mt-2 text-[17px] leading-relaxed text-gray-500">
+            서로 다른 목표와 숙련도를 가진 사용자 2~4명을 권장합니다.
+          </p>
+        </div>
+        <div className="hidden rounded-full bg-[#1c1c1e] px-4 py-2.5 text-xs text-gray-500 md:block">
+          디자인 화면 {frames.length}개 준비됨
+        </div>
       </div>
 
-      {/* 언더라인 탭 */}
-      <div className="border-b border-gray-200">
-        <div className="flex gap-0">
+      <div className="inline-flex rounded-full bg-[#1c1c1e] p-1">
+        <div className="flex gap-1">
           {(['ai', 'manual'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => handleTabChange(tab)}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+              className={`rounded-full px-5 py-2.5 text-sm font-medium transition-colors ${
                 activeTab === tab
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'bg-[#48484a] text-white'
+                  : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               {tab === 'ai' ? 'AI 추천' : '직접 설정'}
@@ -180,22 +189,26 @@ export default function PersonaStep({
       {activeTab === 'ai' && (
         <div className="space-y-3">
           {aiPersonas.length === 0 && !loading && (
-            <div className="py-12 border border-gray-200 rounded-md bg-white text-center space-y-3">
-              <p className="text-sm text-gray-600 font-medium">AI가 최적의 페르소나를 추천합니다</p>
-              <p className="text-xs text-gray-400">
+            <div className="rounded-[18px] border border-white/10 bg-[#1c1c1e] px-8 py-14 text-center">
+              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/15 text-blue-500">
+                <Sparkles className="h-5 w-5" />
+              </span>
+              <p className="mt-5 text-[17px] font-semibold text-gray-800">AI가 적합한 페르소나를 제안합니다</p>
+              <p className="mt-2 text-sm text-gray-500">
                 가져온 화면 이미지를 Gemini가 보고 사용자 유형을 제안합니다
               </p>
               {error && (
                 <p className="text-xs text-red-600 max-w-md mx-auto leading-relaxed px-4">{error}</p>
               )}
-              <Button onClick={handleAiRecommend} size="sm">
+              <Button onClick={handleAiRecommend} className="mt-6">
+                <Sparkles className="h-4 w-4" />
                 AI 페르소나 추천받기
               </Button>
             </div>
           )}
 
           {loading && (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 border border-gray-200 rounded-md bg-white">
+            <div className="flex flex-col items-center justify-center gap-4 rounded-[18px] border border-white/10 bg-[#1c1c1e] py-16">
               <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
               <p className="text-sm text-gray-500">시안을 분석해 페르소나를 생성하는 중...</p>
             </div>
@@ -217,7 +230,7 @@ export default function PersonaStep({
               </div>
 
               {/* 테이블형 카드 */}
-              <div className="border border-gray-200 rounded-md overflow-hidden">
+              <div className="overflow-hidden rounded-[18px] border border-white/10 bg-[#1c1c1e]">
                 {aiPersonas.map((persona, idx) => {
                   const isSelected = selectedIds.has(persona.id)
                   return (
@@ -226,7 +239,7 @@ export default function PersonaStep({
                       onClick={() => toggleSelect(persona.id)}
                       className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${
                         idx !== 0 ? 'border-t border-gray-100' : ''
-                      } ${isSelected ? 'bg-blue-50' : 'bg-white hover:bg-gray-50'}`}
+                      } ${isSelected ? 'bg-blue-50' : 'bg-[#1c1c1e] hover:bg-[#242426]'}`}
                     >
                       {/* 체크박스 */}
                       <div
@@ -279,8 +292,16 @@ export default function PersonaStep({
       {activeTab === 'manual' && (
         <div className="space-y-4">
           {/* 폼 */}
-          <div className="border border-gray-200 rounded-md bg-white p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-gray-800">새 페르소나 추가</h3>
+          <div className="space-y-5 rounded-[18px] border border-white/10 bg-[#1c1c1e] p-6">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/5 text-gray-500">
+                <UserRound className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">새 페르소나 추가</h3>
+                <p className="mt-0.5 text-xs text-gray-500">사용자의 역할과 행동 맥락을 정의하세요.</p>
+              </div>
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -367,7 +388,6 @@ export default function PersonaStep({
             <Button
               onClick={handleAddManual}
               disabled={!form.name.trim() || !form.role.trim()}
-              size="sm"
               variant="outline"
               className="w-full"
             >
@@ -382,11 +402,11 @@ export default function PersonaStep({
               <h3 className="text-xs font-semibold text-gray-700">
                 추가된 페르소나 ({personas.length}개)
               </h3>
-              <div className="border border-gray-200 rounded-md overflow-hidden">
+              <div className="overflow-hidden rounded-[18px] border border-white/10 bg-[#1c1c1e]">
                 {personas.map((persona, idx) => (
                   <div
                     key={persona.id}
-                    className={`flex items-center gap-3 px-4 py-2.5 bg-white ${
+                    className={`flex items-center gap-3 px-5 py-4 bg-[#1c1c1e] ${
                       idx !== 0 ? 'border-t border-gray-100' : ''
                     }`}
                   >
@@ -417,16 +437,25 @@ export default function PersonaStep({
       )}
 
       {/* 하단 버튼 */}
-      <div className="flex items-center justify-between pt-1">
-        <Button variant="outline" size="sm" onClick={onBack}>
+      <div className="flex items-center justify-between border-t border-white/10 pt-6">
+        <Button variant="outline" onClick={onBack}>
           이전
         </Button>
-        <div className="flex items-center gap-3">
-          {totalSelected > 0 && (
-            <span className="text-xs text-gray-500">{totalSelected}개 선택됨</span>
-          )}
-          <Button size="sm" onClick={handleNext} disabled={totalSelected === 0}>
+        <div className="flex items-center gap-4">
+          <div className="text-right">
+            <div className="flex items-center justify-end gap-1.5 text-sm text-gray-700">
+              <Users className="h-4 w-4 text-gray-500" />
+              {totalSelected}명 선택
+            </div>
+            <p className="mt-0.5 text-[11px] text-gray-500">
+              {totalSelected === 0
+                ? '테스트할 페르소나를 한 명 이상 선택하세요.'
+                : '선택한 사용자 관점으로 테스트를 실행합니다.'}
+            </p>
+          </div>
+          <Button onClick={handleNext} disabled={totalSelected === 0}>
             AI 테스트 시작
+            <ArrowRight className="h-4 w-4" />
           </Button>
         </div>
       </div>

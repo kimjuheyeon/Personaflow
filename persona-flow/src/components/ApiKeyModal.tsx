@@ -71,17 +71,17 @@ export default function ApiKeyModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* 배경 */}
       <div
-        className="absolute inset-0 bg-black/50"
+        className="absolute inset-0 bg-black/35 backdrop-blur-sm"
         onClick={dismissable ? onClose : undefined}
       />
 
       {/* 모달 */}
-      <div className="relative w-full max-w-md bg-white rounded-lg shadow-xl border border-gray-200">
+      <div className="relative w-full max-w-md overflow-hidden rounded-[18px] bg-white shadow-2xl">
         {/* 헤더 */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <span className="text-lg">🔑</span>
-            <h2 className="text-sm font-semibold text-gray-900">Gemini API 키 연결</h2>
+            <h2 className="text-[17px] font-semibold text-gray-900">Gemini API 키 연결</h2>
           </div>
           {dismissable && (
             <button
@@ -94,7 +94,7 @@ export default function ApiKeyModal({
         </div>
 
         {/* 본문 */}
-        <div className="px-5 py-4 space-y-4">
+        <div className="px-6 py-5 space-y-5">
           <p className="text-xs text-gray-500 leading-relaxed">
             AI 시안 분석에는 Google Gemini API 키가 필요합니다. 키는 이 브라우저에만 저장되며
             서버로 전송되지 않습니다.
@@ -155,7 +155,7 @@ export default function ApiKeyModal({
         </div>
 
         {/* 푸터 */}
-        <div className="flex items-center justify-between gap-2 px-5 py-4 border-t border-gray-100">
+        <div className="flex items-center justify-between gap-2 px-6 py-5 border-t border-gray-100">
           <div>
             {initialKey && onClear && (
               <button

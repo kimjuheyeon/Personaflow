@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Check, History, RotateCcw } from 'lucide-react'
+import { Check, CircleHelp, History, RotateCcw } from 'lucide-react'
 import UploadStep from './pages/UploadStep'
 import PersonaStep from './pages/PersonaStep'
 import RunningStep from './pages/RunningStep'
 import ReportPage from './pages/ReportPage'
 import ApiKeyModal from './components/ApiKeyModal'
+import OnboardingModal from './components/OnboardingModal'
 import { useApiKey } from './hooks/useApiKey'
 import { getTestHistory, saveTestReport, updateTestReportFeedback } from './lib/history'
 import { imageToBase64 } from './lib/image'
@@ -64,6 +65,7 @@ function Sidebar({
   history,
   currentReportId,
   onOpenReport,
+  onOpenGuide,
 }: {
   step: TestStep
   onReset: () => void
@@ -73,6 +75,7 @@ function Sidebar({
   history: TestReport[]
   currentReportId?: string
   onOpenReport: (report: TestReport) => void
+  onOpenGuide: () => void
 }) {
   const currentIndex = STEP_ORDER.indexOf(step)
   const modelLabel = MODEL_OPTIONS.find((m) => m.id === model)?.label ?? model
@@ -91,11 +94,11 @@ function Sidebar({
   }
 
   return (
-    <aside className="w-60 min-h-screen bg-slate-900 flex flex-col flex-shrink-0">
+    <aside className="w-64 min-h-screen bg-black text-white flex flex-col flex-shrink-0">
       {/* 로고 */}
-      <div className="px-5 py-5 border-b border-slate-700">
+      <div className="h-16 px-6 flex items-center border-b border-white/10">
         <div className="flex items-center gap-2">
-          <span className="text-white font-bold text-base tracking-tight">PersonaFlow</span>
+          <span className="text-white font-semibold text-[17px] tracking-[-0.02em]">PersonaFlow</span>
         </div>
       </div>
 
@@ -104,7 +107,7 @@ function Sidebar({
         <div className="px-4 pt-4">
           <button
             onClick={onReset}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-white/70 hover:text-white hover:bg-white/10 transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             새 테스트 시작
@@ -114,7 +117,7 @@ function Sidebar({
 
       {/* 진행 단계 */}
       <nav className="flex-1 px-4 py-5">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-1">
+        <p className="text-xs font-normal text-white/40 mb-3 px-1">
           진행 단계
         </p>
         <ul className="space-y-0.5">
@@ -123,10 +126,10 @@ function Sidebar({
             return (
               <li key={s}>
                 <div
-                  className={`flex items-center gap-3 px-3 py-2 rounded text-sm transition-colors ${
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                     state === 'current'
-                      ? 'bg-slate-800 text-white'
-                      : 'text-slate-400'
+                      ? 'bg-white/12 text-white'
+                      : 'text-white/55'
                   }`}
                 >
                   {/* 아이콘 */}
@@ -134,9 +137,9 @@ function Sidebar({
                     {state === 'completed' ? (
                       <Check className="w-3.5 h-3.5 text-green-500" />
                     ) : state === 'current' ? (
-                      <span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />
+                      <span className="w-2 h-2 rounded-full bg-[#2997ff] inline-block" />
                     ) : (
-                      <span className="w-2 h-2 rounded-full bg-slate-600 inline-block" />
+                      <span className="w-2 h-2 rounded-full bg-white/25 inline-block" />
                     )}
                   </span>
                   <span
@@ -153,7 +156,7 @@ function Sidebar({
                 </div>
                 {/* 수직 연결선 */}
                 {index < STEP_ORDER.length - 1 && (
-                  <div className="ml-[22px] w-px h-2 bg-slate-700" />
+                  <div className="ml-[22px] w-px h-2 bg-white/15" />
                 )}
               </li>
             )
@@ -162,13 +165,13 @@ function Sidebar({
 
         <div className="mt-7">
           <div className="flex items-center gap-2 mb-3 px-1">
-            <History className="w-3.5 h-3.5 text-slate-500" />
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <History className="w-3.5 h-3.5 text-white/40" />
+            <p className="text-xs font-normal text-white/40">
               테스트 히스토리
             </p>
           </div>
           {history.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-slate-600">저장된 테스트 없음</p>
+            <p className="px-3 py-2 text-xs text-white/30">저장된 테스트 없음</p>
           ) : (
             <ul className="space-y-1">
               {history.slice(0, 6).map((item) => {
@@ -191,8 +194,8 @@ function Sidebar({
                       onClick={() => onOpenReport(item)}
                       className={`w-full rounded px-3 py-2 text-left transition-colors ${
                         isActive
-                          ? 'bg-slate-800 text-white'
-                          : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                          ? 'bg-white/12 text-white'
+                          : 'text-white/55 hover:bg-white/10 hover:text-white'
                       }`}
                     >
                       <span className="block truncate text-xs font-medium">
@@ -211,11 +214,22 @@ function Sidebar({
         </div>
       </nav>
 
+      <div className="px-4 pb-3">
+        <button
+          type="button"
+          onClick={onOpenGuide}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-xs text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+        >
+          <CircleHelp className="h-3.5 w-3.5" />
+          사용 가이드
+        </button>
+      </div>
+
       {/* API 키 상태 */}
-      <div className="px-4 py-3 border-t border-slate-700">
+      <div className="px-4 py-3 border-t border-white/10">
         <button
           onClick={onOpenKey}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/10 transition-colors"
         >
           <span
             className={`w-2 h-2 rounded-full flex-shrink-0 ${
@@ -235,8 +249,8 @@ function Sidebar({
       </div>
 
       {/* 하단 버전 */}
-      <div className="px-5 py-3 border-t border-slate-700">
-        <p className="text-xs text-slate-600">PersonaFlow v0.2</p>
+      <div className="px-6 py-4 border-t border-white/10">
+        <p className="text-[11px] text-white/30">PersonaFlow v0.2</p>
       </div>
     </aside>
   )
@@ -300,6 +314,9 @@ async function prepareReportForHistory(report: TestReport): Promise<TestReport> 
 }
 
 function App() {
+  const [onboardingOpen, setOnboardingOpen] = useState(
+    () => window.localStorage.getItem('personaflow:onboarding-complete') !== 'true'
+  )
   const [step, setStep] = useState<TestStep>('upload')
   const [testMode, setTestMode] = useState<TestMode>('single')
   const [sourceType, setSourceType] = useState<SourceType>('figma')
@@ -395,6 +412,11 @@ function App() {
     setKeyModalOpen(true)
   }
 
+  const completeOnboarding = () => {
+    window.localStorage.setItem('personaflow:onboarding-complete', 'true')
+    setOnboardingOpen(false)
+  }
+
   const activeFrames =
     testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
 
@@ -409,19 +431,20 @@ function App() {
         history={history}
         currentReportId={report?.id}
         onOpenReport={handleOpenReport}
+        onOpenGuide={() => setOnboardingOpen(true)}
       />
 
       {/* 메인 영역 */}
-      <div className="flex-1 flex flex-col bg-gray-50 min-w-0">
+      <div className="flex-1 flex flex-col bg-[#0b0b0c] min-w-0">
         {/* 브레드크럼 헤더 */}
         {step !== 'running' && step !== 'report' && (
-          <header className="px-8 py-3 border-b border-gray-200 bg-white">
+          <header className="h-13 px-10 flex items-center border-b border-white/10 bg-[#1c1c1e]/85 backdrop-blur-xl">
             <p className="text-xs text-gray-500">{BREADCRUMB[step]}</p>
           </header>
         )}
 
         {/* 페이지 콘텐츠 */}
-        <main className={`flex-1 ${step === 'running' ? '' : step === 'report' ? 'overflow-auto' : 'px-8 py-6'}`}>
+        <main className={`flex-1 ${step === 'running' ? '' : step === 'report' ? 'overflow-auto' : 'px-10 py-9'}`}>
           {step === 'upload' && (
             <UploadStep
               frames={frames}
@@ -439,6 +462,11 @@ function App() {
               abConfig={abConfig}
               onAbConfigChange={setAbConfig}
               onNext={handleUploadNext}
+              hasApiKey={hasKey}
+              apiKey={apiKey}
+              model={model}
+              onSaveApiKey={handleSaveKey}
+              onRequireApiKey={() => setKeyModalOpen(true)}
             />
           )}
           {step === 'persona' && (
@@ -492,6 +520,11 @@ function App() {
         onSave={handleSaveKey}
         onClose={() => setKeyModalOpen(false)}
         onClear={handleClearKey}
+      />
+      <OnboardingModal
+        open={onboardingOpen}
+        onClose={() => setOnboardingOpen(false)}
+        onComplete={completeOnboarding}
       />
     </div>
   )
