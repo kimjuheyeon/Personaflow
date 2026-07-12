@@ -211,14 +211,14 @@ export default function RunningStep({
   /* ── 에러 화면 ── */
   if (error) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8 bg-gray-50 min-h-full">
-        <div className="w-full max-w-md space-y-5 text-center">
+      <div className="flex min-h-full flex-1 items-center justify-center bg-[#0b0b0c] p-10">
+        <div className="w-full max-w-lg rounded-[24px] border border-white/10 bg-[#1c1c1e] p-10 text-center">
           <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto">
             <AlertTriangle className="w-6 h-6 text-red-600" />
           </div>
           <div className="space-y-1">
-            <h2 className="text-sm font-semibold text-gray-900">분석에 실패했습니다</h2>
-            <p className="text-xs text-gray-500 leading-relaxed">{error}</p>
+            <h2 className="text-[21px] font-semibold text-gray-900">분석에 실패했습니다</h2>
+            <p className="mt-2 text-sm text-gray-500 leading-relaxed">{error}</p>
           </div>
           <div className="flex items-center justify-center gap-2">
             <Button variant="outline" size="sm" onClick={onBack}>
@@ -237,24 +237,24 @@ export default function RunningStep({
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center p-8 bg-gray-50 min-h-full">
-      <div className="w-full max-w-lg space-y-6">
+    <div className="flex min-h-full flex-1 items-center justify-center bg-[#0b0b0c] p-10">
+      <div className="w-full max-w-2xl space-y-8 rounded-[24px] border border-white/10 bg-[#1c1c1e] p-10">
         {/* 헤더 영역 */}
         <div className="flex items-center gap-3">
           {isDone ? (
-            <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-green-500/15">
               <Check className="w-4 h-4 text-green-600" />
             </div>
           ) : (
-            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-blue-500/15">
               <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
             </div>
           )}
           <div>
-            <h2 className="text-sm font-semibold text-gray-900">
+            <h2 className="text-[21px] font-semibold text-gray-900">
               {isDone ? '분석 완료' : 'AI 테스트 실행 중'}
             </h2>
-            <p className="text-xs text-gray-500">
+            <p className="mt-1 text-sm text-gray-500">
               {isDone
                 ? '리포트를 불러오는 중입니다...'
                 : '페르소나가 시안을 직접 사용하며 UX를 분석하고 있습니다'}
@@ -272,7 +272,7 @@ export default function RunningStep({
         </div>
 
         {/* 단계 리스트 */}
-        <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
+        <div className="overflow-hidden rounded-[18px] border border-white/10 bg-[#272729]">
           {STEPS.map((step, index) => {
             const isCompleted = index < currentStep || isDone
             const isCurrent = index === currentStep && !isDone
@@ -280,7 +280,7 @@ export default function RunningStep({
               <div
                 key={index}
                 className={`flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
-                  index !== 0 ? 'border-t border-gray-100' : ''
+                  index !== 0 ? 'border-t border-white/8' : ''
                 } ${isCurrent ? 'bg-blue-50' : ''}`}
               >
                 <span className="flex-shrink-0">
@@ -318,7 +318,7 @@ export default function RunningStep({
 
         {/* 테스트 정보 */}
         <div className="grid grid-cols-2 gap-4">
-          <div className="border border-gray-200 rounded-md bg-white p-3">
+          <div className="rounded-[18px] border border-white/10 bg-[#272729] p-5">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
               테스트 페르소나
             </p>
@@ -337,7 +337,7 @@ export default function RunningStep({
             </div>
           </div>
 
-          <div className="border border-gray-200 rounded-md bg-white p-3">
+          <div className="rounded-[18px] border border-white/10 bg-[#272729] p-5">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
               분석 대상 화면
             </p>

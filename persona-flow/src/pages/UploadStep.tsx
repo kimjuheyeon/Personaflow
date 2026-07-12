@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react'
 import {
-  ChevronDown,
   Check,
   GitCompare,
   GripVertical,
@@ -10,13 +9,15 @@ import {
   Loader2,
   Pencil,
   Plus,
-  ShieldCheck,
   Upload,
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { importFigmaFrames } from '@/lib/figmaApi'
+import { testApiKey } from '@/lib/ai/gemini'
+import { MODEL_OPTIONS } from '@/lib/ai/keyStore'
 import {
   clearStoredFigmaToken,
   getStoredFigmaToken,
@@ -54,6 +55,11 @@ interface UploadStepProps {
   abConfig: ABTestConfig
   onAbConfigChange: (config: ABTestConfig) => void
   onNext: () => void
+  hasApiKey: boolean
+  apiKey: string
+  model: string
+  onSaveApiKey: (key: string, model: string) => void
+  onRequireApiKey: () => void
 }
 
 const CRITERIA_OPTIONS = ['첫인상', '이해도', '전환 유도', '탐색 흐름', '신뢰감']
@@ -204,6 +210,11 @@ export default function UploadStep({
   abConfig,
   onAbConfigChange,
   onNext,
+  hasApiKey,
+  apiKey,
+  model,
+  onSaveApiKey,
+  onRequireApiKey,
 }: UploadStepProps) {
   const [dragTarget, setDragTarget] = useState<'single' | VariantId | null>(null)
   const [draggedFrame, setDraggedFrame] = useState<DraggedFrame | null>(null)
@@ -212,8 +223,15 @@ export default function UploadStep({
   const [editingName, setEditingName] = useState('')
   const [figmaError, setFigmaError] = useState<string | null>(null)
   const [figmaToken, setFigmaToken] = useState(() => getStoredFigmaToken())
+  const [figmaAccessConnected, setFigmaAccessConnected] = useState(
+    () => Boolean(getStoredFigmaToken())
+  )
+  const [editingFigmaLinks, setEditingFigmaLinks] = useState(() => !figmaSource)
   const [figmaImporting, setFigmaImporting] = useState(false)
-  const [showFigmaAdvanced, setShowFigmaAdvanced] = useState(() => Boolean(getStoredFigmaToken()))
+  const [geminiKeyInput, setGeminiKeyInput] = useState(apiKey)
+  const [geminiModel, setGeminiModel] = useState(model)
+  const [geminiTesting, setGeminiTesting] = useState(false)
+  const [geminiError, setGeminiError] = useState<string | null>(null)
   const [figmaLinkRows, setFigmaLinkRows] = useState<FigmaLinkRow[]>(() =>
     buildInitialFigmaRows(figmaUrl, figmaSource, frames)
   )
@@ -222,7 +240,6 @@ export default function UploadStep({
     onSourceTypeChange(nextSourceType)
     setFigmaError(null)
     if (nextSourceType === 'figma') {
-      setShowFigmaAdvanced(true)
       const figmaFrames = frames.filter((frame) => frame.sourceType === 'figma')
       if (figmaFrames.length > 0) {
         onFramesChange(normalizeFrameOrder(figmaFrames))
@@ -299,7 +316,13 @@ export default function UploadStep({
     const row = figmaLinkRows.find((item) => item.id === rowId)
     const source = parseFigmaUrl(row?.url ?? '')
     if (!source) {
-      setFigmaError('Figma 파일, 디자인, 프로토타입 링크를 입력해주세요.')
+      setFigmaError('올바른 Figma 프레임 링크를 입력해주세요.')
+      return
+    }
+    if (!source.nodeId) {
+      setFigmaError(
+        '선택한 프레임 링크가 아닙니다. Figma에서 프레임을 선택하고 Ctrl/⌘ + L을 눌러 다시 복사해 주세요.'
+      )
       return
     }
 
@@ -307,7 +330,7 @@ export default function UploadStep({
     onFigmaSourceChange(source)
     onFigmaUrlChange(source.url)
     onSourceTypeChange('figma')
-    setShowFigmaAdvanced(true)
+    setEditingFigmaLinks(false)
     setFigmaLinkRows((rows) =>
       ensureTrailingEmptyFigmaRow(
         rows.map((item) => (item.id === rowId ? { ...item, url: source.url, source } : item))
@@ -331,9 +354,11 @@ export default function UploadStep({
       row,
       source: row.source ?? parseFigmaUrl(row.url),
     }))
-    const invalidRow = parsedRows.find((item) => !item.source)
+    const invalidRow = parsedRows.find((item) => !item.source?.nodeId)
     if (parsedRows.length === 0 || invalidRow) {
-      setFigmaError('Figma 파일, 디자인, 프로토타입 링크를 입력해주세요.')
+      setFigmaError(
+        '선택한 프레임 링크만 지원합니다. Figma에서 프레임을 선택하고 Ctrl/⌘ + L로 링크를 복사해 주세요.'
+      )
       return
     }
 
@@ -404,6 +429,31 @@ export default function UploadStep({
   const handleClearFigmaToken = () => {
     clearStoredFigmaToken()
     setFigmaToken('')
+    setFigmaAccessConnected(false)
+  }
+
+  const handleConnectFigmaAccess = () => {
+    if (!figmaToken.trim()) {
+      setFigmaError('Figma 개인 액세스 토큰을 입력해주세요.')
+      return
+    }
+    storeFigmaToken(figmaToken.trim())
+    setFigmaAccessConnected(true)
+    setFigmaError(null)
+  }
+
+  const handleConnectGemini = async () => {
+    if (!geminiKeyInput.trim()) return
+    setGeminiTesting(true)
+    setGeminiError(null)
+    try {
+      await testApiKey(geminiKeyInput.trim(), geminiModel)
+      onSaveApiKey(geminiKeyInput.trim(), geminiModel)
+    } catch (error) {
+      setGeminiError(error instanceof Error ? error.message : 'Gemini 연결 테스트에 실패했습니다.')
+    } finally {
+      setGeminiTesting(false)
+    }
   }
 
   const processSingleFiles = useCallback(
@@ -638,6 +688,8 @@ export default function UploadStep({
   const filledFigmaRows = getFilledFigmaRows(figmaLinkRows)
   const connectedFigmaRows = figmaLinkRows.filter((row) => row.source)
   const hasConnectedFigmaSource = connectedFigmaRows.length > 0 || Boolean(figmaSource)
+  const figmaLinkStepComplete = hasApiKey && hasConnectedFigmaSource
+  const figmaAccessStepComplete = figmaLinkStepComplete && figmaAccessConnected
   const figmaConnectionLabel =
     connectedFigmaRows.length > 1
       ? `${connectedFigmaRows.length}개 Figma 링크 연결됨`
@@ -659,6 +711,31 @@ export default function UploadStep({
       : sourceType === 'figma'
       ? Boolean(hasConnectedFigmaSource && hasReadyABFrames)
       : hasReadyABFrames
+
+  const sourceReady =
+    testMode === 'single'
+      ? sourceType === 'figma'
+        ? Boolean(hasConnectedFigmaSource && hasFigmaFrameImages && frames.every(hasFrameImage))
+        : frames.length > 0
+      : sourceType === 'figma'
+      ? Boolean(hasConnectedFigmaSource && hasReadyABFrames)
+      : hasReadyABFrames
+
+  const getNextStepHint = () => {
+    if (sourceType === 'figma' && !hasConnectedFigmaSource) {
+      return '계속하려면 Figma 링크를 연결하세요.'
+    }
+    if (sourceType === 'figma' && !hasFigmaFrameImages) {
+      return '계속하려면 분석할 Figma 화면 이미지를 가져오세요.'
+    }
+    if (testMode === 'ab' && !hasReadyABFrames) {
+      return 'A안과 B안에 각각 한 개 이상의 화면을 추가하세요.'
+    }
+    if (sourceType === 'image' && frames.length === 0) {
+      return '계속하려면 분석할 이미지를 업로드하세요.'
+    }
+    return '디자인 준비가 완료되었습니다. 페르소나를 설정해 보세요.'
+  }
 
   const renderFrameGrid = (
     scope: DragScope,
@@ -748,10 +825,10 @@ export default function UploadStep({
   )
 
   const renderAiModeControl = () => (
-    <div className="rounded-md border border-gray-200 bg-white p-3">
+    <div className="rounded-[18px] border border-white/10 bg-[#272729] p-5">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-semibold text-gray-900">실행 모드</p>
-        <span className="inline-flex items-center gap-1.5 rounded bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-black px-3 py-1.5 text-[11px] font-medium text-white">
           <KeyRound className="h-3 w-3" />
           실제 AI
         </span>
@@ -763,12 +840,12 @@ export default function UploadStep({
   )
 
   const renderTestModeControl = () => (
-    <div className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-0.5">
+    <div className="inline-flex rounded-full bg-gray-100 p-1">
       <button
         onClick={() => handleTestModeChange('single')}
-        className={`rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
+        className={`rounded-full px-4 py-2 text-xs font-medium transition-colors ${
           testMode === 'single'
-            ? 'bg-white text-gray-900 shadow-sm'
+            ? 'bg-[#48484a] text-white'
             : 'text-gray-500 hover:text-gray-800'
         }`}
       >
@@ -776,9 +853,9 @@ export default function UploadStep({
       </button>
       <button
         onClick={() => handleTestModeChange('ab')}
-        className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
+        className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium transition-colors ${
           testMode === 'ab'
-            ? 'bg-white text-gray-900 shadow-sm'
+            ? 'bg-[#48484a] text-white'
             : 'text-gray-500 hover:text-gray-800'
         }`}
       >
@@ -798,9 +875,9 @@ export default function UploadStep({
     <label
       htmlFor={inputId}
       className={`
-        border border-dashed rounded-md transition-colors cursor-pointer
-        flex flex-col items-center justify-center gap-3 py-14
-        ${dragTarget === target ? 'border-blue-400 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-50'}
+        border border-dashed rounded-[18px] transition-colors cursor-pointer
+        flex flex-col items-center justify-center gap-3 py-16
+        ${dragTarget === target ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-[#1c1c1e] hover:bg-[#242426]'}
       `}
       onDrop={onDrop}
       onDragOver={(e) => handleDragOver(target, e)}
@@ -822,7 +899,7 @@ export default function UploadStep({
     <label
       htmlFor={inputId}
       className={`
-        border border-dashed rounded-md transition-colors cursor-pointer
+        border border-dashed rounded-[11px] transition-colors cursor-pointer
         flex items-center justify-center gap-2 py-4
         ${dragTarget === target ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'}
       `}
@@ -836,7 +913,7 @@ export default function UploadStep({
   )
 
   const renderVariantPane = (variant: DesignVariant) => (
-    <div key={variant.id} className="border border-gray-200 rounded-md bg-white p-4 space-y-4">
+    <div key={variant.id} className="border border-white/10 rounded-[18px] bg-[#272729] p-5 space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-gray-900">{variant.name}</h3>
@@ -887,7 +964,7 @@ export default function UploadStep({
   )
 
   const renderFigmaVariantPane = (variant: DesignVariant) => (
-    <div key={variant.id} className="border border-gray-200 rounded-md bg-white p-4 space-y-4">
+    <div key={variant.id} className="border border-white/10 rounded-[18px] bg-[#272729] p-5 space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-gray-900">{variant.name}</h3>
@@ -1020,179 +1097,277 @@ export default function UploadStep({
   }
 
   return (
-    <div className="max-w-6xl space-y-5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mx-auto max-w-[1180px] space-y-8">
+      <div>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-            New test
-          </p>
-          <h2 className="mt-1 text-xl font-semibold tracking-tight text-gray-950">
-            어떤 디자인을 테스트할까요?
+          <p className="text-sm font-medium text-blue-600">새로운 UX 테스트</p>
+          <h2 className="mt-2 text-[34px] font-semibold leading-tight tracking-[-0.025em] text-gray-950">
+            테스트할 디자인을 가져오세요.
           </h2>
-          <p className="mt-1 text-sm text-gray-500">
-            Figma 또는 이미지 화면으로 실제 AI 페르소나 테스트를 준비하세요.
+          <p className="mt-2 text-[17px] leading-relaxed text-gray-500">
+            Figma 링크를 연결하거나 이미지 파일을 업로드하면 됩니다.
           </p>
-        </div>
-        <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
-          <ShieldCheck className="h-4 w-4" />
-          기존 이미지 업로드 기능은 그대로 유지됩니다
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm">
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px]">
-          <section className="space-y-5 p-5 sm:p-6">
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => handleSourceTypeChange('figma')}
+          className={`flex items-center gap-4 rounded-[18px] border p-5 text-left transition-colors ${
+            sourceType === 'figma'
+              ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
+              : 'border-white/10 bg-[#1c1c1e] hover:bg-[#242426]'
+          }`}
+        >
+          <span className={`flex h-11 w-11 items-center justify-center rounded-full ${sourceType === 'figma' ? 'bg-blue-500 text-white' : 'bg-white/5 text-gray-500'}`}>
+            <Link className="h-5 w-5" />
+          </span>
+          <span>
+            <span className="block text-[15px] font-semibold text-gray-900">Figma에서 가져오기</span>
+            <span className="mt-1 block text-xs text-gray-500">파일 또는 프레임 링크 사용</span>
+          </span>
+          {sourceType === 'figma' && <Check className="ml-auto h-5 w-5 text-blue-500" />}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleSourceTypeChange('image')}
+          className={`flex items-center gap-4 rounded-[18px] border p-5 text-left transition-colors ${
+            sourceType === 'image'
+              ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
+              : 'border-white/10 bg-[#1c1c1e] hover:bg-[#242426]'
+          }`}
+        >
+          <span className={`flex h-11 w-11 items-center justify-center rounded-full ${sourceType === 'image' ? 'bg-blue-500 text-white' : 'bg-white/5 text-gray-500'}`}>
+            <Upload className="h-5 w-5" />
+          </span>
+          <span>
+            <span className="block text-[15px] font-semibold text-gray-900">이미지 업로드</span>
+            <span className="mt-1 block text-xs text-gray-500">PNG 또는 JPG 파일 사용</span>
+          </span>
+          {sourceType === 'image' && <Check className="ml-auto h-5 w-5 text-blue-500" />}
+        </button>
+      </div>
+
+      <div className="overflow-hidden rounded-[18px] border border-white/10 bg-[#1c1c1e]">
+        <div className="grid grid-cols-1">
+          <section className="space-y-7 p-7 sm:p-8">
             {sourceType === 'figma' ? (
               <>
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
-                    <Link className="h-5 w-5" />
-                  </div>
+                <div className="flex items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-base font-semibold text-gray-950">
-                      Figma 링크로 시작
+                    <h3 className="text-[21px] font-semibold tracking-[-0.015em] text-gray-950">
+                      Figma 디자인 가져오기
                     </h3>
                     <p className="mt-1 text-sm text-gray-500">
-                      Figma 파일, 선택 화면, 프로토타입 링크를 붙여넣어 테스트 소스로 연결합니다.
+                      네 단계를 완료하면 AI 페르소나 테스트가 준비됩니다.
                     </p>
                   </div>
+                  <span className="rounded-full bg-white/5 px-3 py-1.5 text-xs text-gray-500">
+                    {[hasApiKey, figmaLinkStepComplete, figmaAccessStepComplete, hasFigmaFrameImages].filter(Boolean).length} / 4 완료
+                  </span>
                 </div>
 
-                <div className="rounded-md border border-gray-200 bg-gray-50 p-3 sm:p-4">
-                  <div className="space-y-2">
-                    {figmaLinkRows.map((row, index) => {
-                      const isConnected = Boolean(row.source)
-                      const canRemove = figmaLinkRows.length > 1 || Boolean(row.url.trim())
+                <div className="space-y-3">
+                  <div className={`rounded-[18px] border p-5 ${hasApiKey ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : 'border-blue-500/40 bg-[#272729]'}`}>
+                    <div className="flex items-start gap-4">
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${hasApiKey ? 'bg-emerald-500 text-white' : 'bg-blue-500 text-white'}`}>
+                        {hasApiKey ? <Check className="h-4 w-4" /> : '1'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[15px] font-semibold text-gray-900">Gemini AI 연결</p>
+                        <p className="mt-1 text-xs text-gray-500">AI 페르소나 분석에 사용할 무료 Gemini API 키를 연결합니다.</p>
 
-                      return (
-                        <div key={row.id} className="flex flex-col gap-2 sm:flex-row">
-                          <div className="relative flex-1">
-                            <Input
-                              value={row.url}
-                              onChange={(e) => handleFigmaRowUrlChange(row.id, e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleConnectFigma(row.id)
-                              }}
-                              placeholder={`Figma 링크 ${index + 1}`}
-                              className="h-11 bg-white pr-20 text-sm"
-                            />
-                            {isConnected && (
-                              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-emerald-600">
-                                연결됨
-                              </span>
-                            )}
+                        {hasApiKey ? (
+                          <div className="mt-4 flex items-center justify-between rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
+                            <div>
+                              <p className="text-sm font-medium text-gray-800">Gemini 연결 완료</p>
+                              <p className="mt-1 text-xs text-gray-500">{MODEL_OPTIONS.find((option) => option.id === model)?.label ?? model}</p>
+                            </div>
+                            <button type="button" onClick={onRequireApiKey} className="text-xs font-medium text-blue-500 hover:text-blue-400">API 키 변경</button>
                           </div>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => handleConnectFigma(row.id)}
-                              disabled={!row.url.trim()}
-                              className="h-11 px-5 text-sm"
+                        ) : (
+                          <div className="mt-4 space-y-3">
+                            <a
+                              href="https://aistudio.google.com/apikey"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center text-xs font-medium text-blue-500 hover:text-blue-400"
                             >
-                              링크 연결
-                            </Button>
-                            {canRemove && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() => handleRemoveFigmaLinkRow(row.id)}
-                                className="h-11 w-11"
-                              >
-                                <X className="h-4 w-4" />
+                              Google AI Studio에서 무료 API 키 발급받기 →
+                            </a>
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_260px_auto]">
+                              <Input
+                                type="password"
+                                value={geminiKeyInput}
+                                onChange={(event) => {
+                                  setGeminiKeyInput(event.target.value)
+                                  setGeminiError(null)
+                                }}
+                                placeholder="Gemini API 키 (AIza...)"
+                                className="h-11 font-mono text-sm"
+                              />
+                              <Select value={geminiModel} onValueChange={setGeminiModel}>
+                                <SelectTrigger className="h-11 text-sm"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  {MODEL_OPTIONS.map((option) => (
+                                    <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Button onClick={handleConnectGemini} disabled={!geminiKeyInput.trim() || geminiTesting} className="h-11 px-5 text-sm">
+                                {geminiTesting ? <><Loader2 className="h-4 w-4 animate-spin" />연결 중</> : '연결 테스트'}
                               </Button>
-                            )}
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-gray-500">키는 현재 브라우저에만 저장되며 PersonaFlow 서버에는 저장되지 않습니다.</p>
+                            {geminiError && <p className="text-xs text-red-600">{geminiError}</p>}
                           </div>
-                        </div>
-                      )
-                    })}
+                        )}
+                      </div>
+                    </div>
                   </div>
 
-                  <button
-                    onClick={() => setShowFigmaAdvanced(!showFigmaAdvanced)}
-                    className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900"
-                  >
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 transition-transform ${
-                        showFigmaAdvanced ? 'rotate-180' : ''
-                      }`}
-                    />
-                    실제 AI용 Figma 화면 이미지 가져오기
-                  </button>
-
-                  {showFigmaAdvanced && (
-                    <div className="mt-3 space-y-2">
-                      <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-900">
-                        여기에 넣는 값은 Figma 계정에서 발급한 <b>개인 액세스 토큰</b>입니다.
-                        Codex나 Figma 플러그인 설정값이 아닙니다.
-                        실제 AI가 화면을 읽으려면 이 토큰으로 Figma 화면 이미지를 가져와야 합니다.
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
-                        <Input
-                          type="password"
-                          value={figmaToken}
-                          onChange={(e) => {
-                            setFigmaToken(e.target.value)
-                            setFigmaError(null)
-                          }}
-                          placeholder="Figma 개인 액세스 토큰"
-                          className="h-9 bg-white font-mono text-sm"
-                        />
-                        <Button
-                          size="sm"
-                          onClick={handleImportFigmaFrames}
-                          disabled={figmaImporting || filledFigmaRows.length === 0}
-                          className="h-9 px-4"
-                        >
-                          {figmaImporting ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              가져오는 중
-                            </>
-                          ) : (
-                            `${filledFigmaRows.length || 0}개 링크 이미지 가져오기`
+                  <div className={`rounded-[18px] border p-5 ${figmaLinkStepComplete ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : hasApiKey ? 'border-blue-500/40 bg-[#272729]' : 'border-white/8 bg-[#202022] opacity-60'}`}>
+                    <div className="flex items-start gap-4">
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${figmaLinkStepComplete ? 'bg-emerald-500 text-white' : hasApiKey ? 'bg-blue-500 text-white' : 'bg-white/8 text-white/30'}`}>
+                        {figmaLinkStepComplete ? <Check className="h-4 w-4" /> : '2'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="text-[15px] font-semibold text-gray-900">Figma 프레임 링크</p>
+                            <p className="mt-1 text-xs text-gray-500">Figma에서 프레임을 선택한 뒤 Ctrl/⌘ + L로 링크를 복사하세요.</p>
+                          </div>
+                          {hasConnectedFigmaSource && !editingFigmaLinks && (
+                            <button type="button" onClick={() => setEditingFigmaLinks(true)} className="text-xs font-medium text-blue-500 hover:text-blue-400">
+                              링크 변경
+                            </button>
                           )}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleClearFigmaToken}
-                          disabled={!figmaToken}
-                          className="h-9 px-3"
-                        >
-                          저장된 토큰 삭제
-                        </Button>
+                        </div>
+
+                        {!hasApiKey ? (
+                          <p className="mt-4 text-xs text-gray-500">먼저 Gemini AI 연결을 완료하세요.</p>
+                        ) : hasConnectedFigmaSource && !editingFigmaLinks ? (
+                          <div className="mt-4 rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
+                            <p className="truncate text-sm font-medium text-gray-800">{figmaConnectionLabel}</p>
+                            <p className="mt-1 text-xs text-emerald-400">링크 확인 완료</p>
+                          </div>
+                        ) : (
+                          <div className="mt-4 space-y-2">
+                            {figmaLinkRows.map((row, index) => {
+                              const canRemove = figmaLinkRows.length > 1 || Boolean(row.url.trim())
+                              return (
+                                <div key={row.id} className="flex gap-2">
+                                  <Input
+                                    value={row.url}
+                                    onChange={(e) => handleFigmaRowUrlChange(row.id, e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleConnectFigma(row.id)
+                                    }}
+                                    placeholder={index === 0 ? '선택한 Figma 프레임 링크 붙여넣기' : `추가 프레임 링크 ${index + 1}`}
+                                    className="h-11 flex-1 text-sm"
+                                  />
+                                  <Button onClick={() => handleConnectFigma(row.id)} disabled={!row.url.trim()} className="h-11 px-5 text-sm">
+                                    링크 확인
+                                  </Button>
+                                  {canRemove && (
+                                    <Button type="button" variant="outline" size="icon" onClick={() => handleRemoveFigmaLinkRow(row.id)} className="h-11 w-11">
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  )}
+                  </div>
 
-                  {figmaError && <p className="mt-3 text-xs text-red-600">{figmaError}</p>}
-                  {hasConnectedFigmaSource && !hasFigmaFrameImages && (
-                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
-                      실제 AI 분석을 하려면 Figma 화면 이미지가 필요합니다. 위 영역에서
-                      Figma 개인 액세스 토큰으로 화면 이미지를 먼저 가져오세요.
+                  <div className={`rounded-[18px] border p-5 ${figmaAccessStepComplete ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : figmaLinkStepComplete ? 'border-blue-500/40 bg-[#272729]' : 'border-white/8 bg-[#202022] opacity-60'}`}>
+                    <div className="flex items-start gap-4">
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${figmaAccessStepComplete ? 'bg-emerald-500 text-white' : figmaLinkStepComplete ? 'bg-blue-500 text-white' : 'bg-white/8 text-white/30'}`}>
+                        {figmaAccessStepComplete ? <Check className="h-4 w-4" /> : '3'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[15px] font-semibold text-gray-900">Figma 접근 권한</p>
+                        <p className="mt-1 text-xs text-gray-500">화면을 읽기 위한 개인 액세스 토큰을 연결합니다.</p>
+
+                        {!figmaLinkStepComplete ? (
+                          <p className="mt-4 text-xs text-gray-500">먼저 Gemini 연결과 Figma 프레임 링크 확인을 완료하세요.</p>
+                        ) : figmaAccessStepComplete ? (
+                          <div className="mt-4 flex items-center justify-between rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
+                            <div>
+                              <p className="text-sm font-medium text-gray-800">접근 권한 연결됨</p>
+                              <p className="mt-1 text-xs text-gray-500">토큰은 이 브라우저에만 저장됩니다.</p>
+                            </div>
+                            <button type="button" onClick={handleClearFigmaToken} className="text-xs font-medium text-blue-500 hover:text-blue-400">권한 변경</button>
+                          </div>
+                        ) : (
+                          <div className="mt-4 space-y-3">
+                            <Input
+                              type="password"
+                              value={figmaToken}
+                              onChange={(e) => {
+                                setFigmaToken(e.target.value)
+                                setFigmaAccessConnected(false)
+                                setFigmaError(null)
+                              }}
+                              placeholder="Figma 개인 액세스 토큰"
+                              className="h-11 font-mono text-sm"
+                            />
+                            <div className="flex items-center justify-between gap-3">
+                              <a href="https://help.figma.com/hc/en-us/articles/8085703771159-Manage-personal-access-tokens" target="_blank" rel="noreferrer" className="text-xs text-gray-500 hover:text-blue-500">
+                                토큰 발급 방법
+                              </a>
+                              <Button onClick={handleConnectFigmaAccess} disabled={!figmaToken.trim()} className="h-10 px-5 text-sm">
+                                권한 연결
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
+                  </div>
+
+                  <div className={`rounded-[18px] border p-5 ${hasFigmaFrameImages ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : figmaAccessStepComplete ? 'border-blue-500/40 bg-[#272729]' : 'border-white/8 bg-[#202022] opacity-60'}`}>
+                    <div className="flex items-start gap-4">
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${hasFigmaFrameImages ? 'bg-emerald-500 text-white' : figmaAccessStepComplete ? 'bg-blue-500 text-white' : 'bg-white/8 text-white/30'}`}>
+                        {hasFigmaFrameImages ? <Check className="h-4 w-4" /> : '4'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[15px] font-semibold text-gray-900">분석 화면 가져오기</p>
+                        <p className="mt-1 text-xs text-gray-500">AI가 실제로 읽을 화면 이미지를 Figma에서 불러옵니다.</p>
+
+                        {!figmaAccessStepComplete ? (
+                          <p className="mt-4 text-xs text-gray-500">먼저 링크 확인과 Figma 접근 권한 연결을 완료하세요.</p>
+                        ) : (
+                          <div className="mt-4 flex items-center justify-between gap-4 rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
+                            <div>
+                              <p className="text-sm font-medium text-gray-800">
+                                {hasFigmaFrameImages ? `${figmaReadyFrames.length}개 화면 준비 완료` : '가져온 화면이 없습니다'}
+                              </p>
+                              <p className="mt-1 text-xs text-gray-500">
+                                {hasFigmaFrameImages ? '아래에서 화면 순서와 대상을 확인하세요.' : '연결한 링크에서 분석 화면을 가져옵니다.'}
+                              </p>
+                            </div>
+                            <Button onClick={handleImportFigmaFrames} disabled={figmaImporting || filledFigmaRows.length === 0} className="h-10 flex-shrink-0 px-5 text-sm">
+                              {figmaImporting ? <><Loader2 className="h-4 w-4 animate-spin" />가져오는 중</> : hasFigmaFrameImages ? '다시 불러오기' : '화면 불러오기'}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {figmaError && <p className="px-1 text-xs text-red-600">{figmaError}</p>}
                 </div>
 
-                <div>{renderTestModeControl()}</div>
+                {hasFigmaFrameImages && <div>{renderTestModeControl()}</div>}
 
-                {hasConnectedFigmaSource ? (
+                {hasFigmaFrameImages && (
                   <div className="space-y-4">
-                    <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
-                      <p className="text-xs font-semibold text-emerald-900">
-                        {hasFigmaFrameImages ? '화면 이미지 가져오기 완료' : '링크 연결됨'}
-                      </p>
-                      <p className="mt-1 break-all text-xs text-emerald-800">
-                        {figmaConnectionLabel}
-                      </p>
-                      <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80">
-                        {hasFigmaFrameImages
-                          ? `${figmaReadyFrames.length}개 화면 이미지를 테스트 소스로 가져왔습니다.`
-                          : '실제 AI 분석은 아직 실행할 수 없습니다. 위에서 Figma 화면 이미지를 먼저 가져오세요.'}
-                      </p>
-                    </div>
-
                     {testMode === 'single' ? (
                       frames.length > 0 && (
                         <div className="space-y-3">
@@ -1206,24 +1381,16 @@ export default function UploadStep({
                       renderFigmaABBuilder()
                     )}
                   </div>
-                ) : (
-                  <div className="rounded-md border border-dashed border-gray-300 py-12 text-center">
-                    <Link className="mx-auto mb-3 h-7 w-7 text-gray-300" />
-                    <p className="text-sm font-medium text-gray-700">Figma 링크를 붙여넣으세요</p>
-                    <p className="mt-1 text-xs text-gray-400">
-                      실제 AI 분석은 Figma 화면 이미지와 Gemini 무료 API 키가 필요합니다.
-                    </p>
-                  </div>
                 )}
               </>
             ) : (
               <div className="space-y-5">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
+                  <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
                     <Upload className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold text-gray-950">
+                    <h3 className="text-[21px] font-semibold tracking-[-0.015em] text-gray-950">
                       이미지 파일로 테스트
                     </h3>
                     <p className="mt-1 text-sm text-gray-500">
@@ -1330,15 +1497,15 @@ export default function UploadStep({
             )}
           </section>
 
-          <aside className="space-y-4 border-t border-gray-200 bg-gray-50 p-5 lg:border-l lg:border-t-0">
+          <aside className="hidden">
             <div className="space-y-2">
-              <p className="text-xs font-semibold text-gray-500">입력 방식</p>
+              <p className="text-xs font-semibold text-gray-500">디자인 가져오기</p>
               <button
                 onClick={() => handleSourceTypeChange('figma')}
-                className={`w-full rounded-md border p-3 text-left transition-colors ${
+                className={`w-full rounded-[11px] border p-4 text-left transition-colors ${
                   sourceType === 'figma'
-                    ? 'border-slate-900 bg-white shadow-sm'
-                    : 'border-gray-200 bg-transparent hover:bg-white'
+                    ? 'border-blue-500 bg-[#272729] ring-1 ring-blue-500'
+                    : 'border-gray-200 bg-transparent hover:bg-[#1c1c1e]'
                 }`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold text-gray-900">
@@ -1351,10 +1518,10 @@ export default function UploadStep({
               </button>
               <button
                 onClick={() => handleSourceTypeChange('image')}
-                className={`w-full rounded-md border p-3 text-left transition-colors ${
+                className={`w-full rounded-[11px] border p-4 text-left transition-colors ${
                   sourceType === 'image'
-                    ? 'border-slate-900 bg-white shadow-sm'
-                    : 'border-gray-200 bg-transparent hover:bg-white'
+                    ? 'border-blue-500 bg-[#272729] ring-1 ring-blue-500'
+                    : 'border-gray-200 bg-transparent hover:bg-[#1c1c1e]'
                 }`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold text-gray-900">
@@ -1367,9 +1534,64 @@ export default function UploadStep({
               </button>
             </div>
 
+            <div className="rounded-[18px] border border-white/10 bg-[#272729] p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold text-gray-900">준비 상태</p>
+                  <p className="mt-1 text-[11px] text-gray-500">첫 테스트에 필요한 항목입니다.</p>
+                </div>
+                <span className="text-xs font-medium text-gray-500">
+                  {[sourceReady, hasApiKey].filter(Boolean).length}/2
+                </span>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`flex h-6 w-6 items-center justify-center rounded-full ${
+                      sourceReady ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/8 text-white/30'
+                    }`}
+                  >
+                    {sourceReady ? <Check className="h-3.5 w-3.5" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+                  </span>
+                  <div>
+                    <p className="text-xs font-medium text-gray-800">디자인 화면</p>
+                    <p className="mt-0.5 text-[11px] text-gray-500">
+                      {sourceReady ? '준비 완료' : 'Figma 또는 이미지가 필요합니다'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`flex h-6 w-6 items-center justify-center rounded-full ${
+                      hasApiKey ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/8 text-white/30'
+                    }`}
+                  >
+                    {hasApiKey ? <Check className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-gray-800">Gemini API 키</p>
+                    <p className="mt-0.5 text-[11px] text-gray-500">
+                      {hasApiKey ? '연결 완료' : 'AI 테스트 실행 전에 필요합니다'}
+                    </p>
+                  </div>
+                  {!hasApiKey && (
+                    <button
+                      type="button"
+                      onClick={onRequireApiKey}
+                      className="text-[11px] font-medium text-blue-500 hover:text-blue-400"
+                    >
+                      설정
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {renderAiModeControl()}
 
-            <div className="rounded-md border border-gray-200 bg-white p-3">
+            <div className="rounded-[18px] border border-white/10 bg-[#272729] p-5">
               <p className="text-xs font-semibold text-gray-900">현재 선택</p>
               <dl className="mt-3 space-y-2 text-xs">
                 <div className="flex items-center justify-between gap-3">
@@ -1399,9 +1621,14 @@ export default function UploadStep({
         </div>
       </div>
 
-      <div className="flex justify-end">
-        <Button onClick={onNext} disabled={!canProceed} size="sm" className="h-10 px-6">
-          다음 단계 →
+      <div className="flex items-center justify-between gap-6 pb-4">
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <span className={`h-1.5 w-1.5 rounded-full ${canProceed ? 'bg-emerald-400' : 'bg-white/25'}`} />
+          {getNextStepHint()}
+        </div>
+        <Button onClick={onNext} disabled={!canProceed} className="h-11 flex-shrink-0 px-6 text-[15px]">
+          페르소나 설정
+          <span aria-hidden>→</span>
         </Button>
       </div>
     </div>

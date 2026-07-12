@@ -941,19 +941,20 @@ export default function ReportPage({
   ]
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="report-page flex h-full flex-col bg-[#0b0b0c]">
       {/* 리포트 상단 */}
-      <div className="px-8 py-4 bg-white border-b border-gray-200 flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-wrap items-start justify-between gap-6 border-b border-white/10 bg-[#111113] px-10 py-7">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">{report.projectName}</h1>
-          <p className="text-xs text-slate-500 mt-0.5">{formattedDate} 생성</p>
+          <p className="text-sm font-medium text-blue-500">UX 테스트 리포트</p>
+          <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.025em] text-white">{report.projectName}</h1>
+          <p className="mt-1 text-xs text-gray-500">{formattedDate} 생성</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           <Button
             variant="outline"
             size="sm"
             onClick={() => downloadJson(report)}
-            className="gap-1.5 text-xs h-8"
+            className="gap-1.5 text-xs"
           >
             <FileJson className="w-3.5 h-3.5" />
             JSON
@@ -962,12 +963,12 @@ export default function ReportPage({
             variant="outline"
             size="sm"
             onClick={() => window.print()}
-            className="gap-1.5 text-xs h-8"
+            className="gap-1.5 text-xs"
           >
             <Download className="w-3.5 h-3.5" />
             PDF
           </Button>
-          <Button size="sm" onClick={onNewTest} className="gap-1.5 text-xs h-8">
+          <Button onClick={onNewTest} className="gap-1.5 text-xs">
             <RefreshCw className="w-3.5 h-3.5" />
             새 테스트
           </Button>
@@ -975,16 +976,16 @@ export default function ReportPage({
       </div>
 
       {/* 언더라인 탭 */}
-      <div className="px-8 bg-white border-b border-gray-200">
-        <div className="flex gap-0">
+      <div className="border-b border-white/10 bg-[#111113] px-10 pb-4">
+        <div className="inline-flex gap-1 rounded-full bg-[#1c1c1e] p-1">
           {tabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
+              className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
                 activeTab === tab.key
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'bg-[#48484a] text-white'
+                  : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               {tab.label}
@@ -994,7 +995,8 @@ export default function ReportPage({
       </div>
 
       {/* 탭 컨텐츠 */}
-      <div className="flex-1 overflow-auto px-8 py-6">
+      <div className="flex-1 overflow-auto px-10 py-8">
+        <div className="mx-auto max-w-[1180px]">
         {activeTab === 'summary' && <SummaryTab report={report} />}
         {activeTab === 'ab' && <ABComparisonTab report={report} />}
         {activeTab === 'findings' && <FindingsTab report={report} />}
@@ -1008,6 +1010,7 @@ export default function ReportPage({
             onFeedbackThreadsChange={onFeedbackThreadsChange}
           />
         )}
+        </div>
       </div>
     </div>
   )
