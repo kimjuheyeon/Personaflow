@@ -330,7 +330,8 @@ export default function UploadStep({
     onFigmaSourceChange(source)
     onFigmaUrlChange(source.url)
     onSourceTypeChange('figma')
-    setEditingFigmaLinks(false)
+    // 첫 링크를 확인한 뒤에도 입력 영역을 유지해 다음 Flow 화면을 계속 추가한다.
+    setEditingFigmaLinks(true)
     setFigmaLinkRows((rows) =>
       ensureTrailingEmptyFigmaRow(
         rows.map((item) => (item.id === rowId ? { ...item, url: source.url, source } : item))
@@ -346,6 +347,19 @@ export default function UploadStep({
     if (testMode === 'ab') {
       onVariantsChange(variants.map((variant) => ({ ...variant, frames: [] })))
     }
+  }
+
+  const handleFinishFigmaLinks = () => {
+    const filledRows = getFilledFigmaRows(figmaLinkRows)
+    const hasUnconfirmedRow = filledRows.some((row) => !row.source)
+
+    if (filledRows.length === 0 || hasUnconfirmedRow) {
+      setFigmaError('입력한 모든 Figma 프레임 링크를 확인해주세요.')
+      return
+    }
+
+    setFigmaError(null)
+    setEditingFigmaLinks(false)
   }
 
   const handleImportFigmaFrames = async () => {
@@ -849,7 +863,7 @@ export default function UploadStep({
             : 'text-gray-500 hover:text-gray-800'
         }`}
       >
-        단일 시안
+        Flow / 단일 시안
       </button>
       <button
         onClick={() => handleTestModeChange('ab')}
@@ -1228,20 +1242,22 @@ export default function UploadStep({
                     </div>
                   </div>
 
-                  <div className={`rounded-[18px] border p-5 ${figmaLinkStepComplete ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : hasApiKey ? 'border-blue-500/40 bg-[#272729]' : 'border-white/8 bg-[#202022] opacity-60'}`}>
+                  <div className={`rounded-[18px] border p-5 ${figmaLinkStepComplete ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : hasApiKey ? 'border-blue-500/80 bg-[#272729]' : 'border-gray-200 bg-[#18181a]'}`}>
                     <div className="flex items-start gap-4">
-                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${figmaLinkStepComplete ? 'bg-emerald-500 text-white' : hasApiKey ? 'bg-blue-500 text-white' : 'bg-white/8 text-white/30'}`}>
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${figmaLinkStepComplete ? 'border-emerald-500 bg-emerald-500 text-white' : hasApiKey ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-300 bg-gray-100 text-gray-500'}`}>
                         {figmaLinkStepComplete ? <Check className="h-4 w-4" /> : '2'}
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-4">
                           <div>
                             <p className="text-[15px] font-semibold text-gray-900">Figma 프레임 링크</p>
-                            <p className="mt-1 text-xs text-gray-500">Figma에서 프레임을 선택한 뒤 Ctrl/⌘ + L로 링크를 복사하세요.</p>
+                            <p className="mt-1 text-xs text-gray-500">
+                              화면마다 프레임 링크를 하나씩 추가하세요. 첫 링크 확인 후 다음 입력칸이 자동으로 열립니다.
+                            </p>
                           </div>
                           {hasConnectedFigmaSource && !editingFigmaLinks && (
                             <button type="button" onClick={() => setEditingFigmaLinks(true)} className="text-xs font-medium text-blue-500 hover:text-blue-400">
-                              링크 변경
+                              화면 추가·관리
                             </button>
                           )}
                         </div>
@@ -1279,15 +1295,34 @@ export default function UploadStep({
                                 </div>
                               )
                             })}
+                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
+                              <div>
+                                <p className="text-xs font-semibold text-gray-800">
+                                  {connectedFigmaRows.length}개 화면 링크 확인됨
+                                </p>
+                                <p className="mt-1 text-[11px] text-gray-500">
+                                  Flow에 필요한 화면을 모두 추가한 뒤 입력 완료를 눌러주세요.
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleFinishFigmaLinks}
+                                disabled={connectedFigmaRows.length === 0}
+                                className="h-9 px-4 text-xs"
+                              >
+                                입력 완료
+                              </Button>
+                            </div>
                           </div>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  <div className={`rounded-[18px] border p-5 ${figmaAccessStepComplete ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : figmaLinkStepComplete ? 'border-blue-500/40 bg-[#272729]' : 'border-white/8 bg-[#202022] opacity-60'}`}>
+                  <div className={`rounded-[18px] border p-5 ${figmaAccessStepComplete ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : figmaLinkStepComplete ? 'border-blue-500/80 bg-[#272729]' : 'border-gray-200 bg-[#18181a]'}`}>
                     <div className="flex items-start gap-4">
-                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${figmaAccessStepComplete ? 'bg-emerald-500 text-white' : figmaLinkStepComplete ? 'bg-blue-500 text-white' : 'bg-white/8 text-white/30'}`}>
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${figmaAccessStepComplete ? 'border-emerald-500 bg-emerald-500 text-white' : figmaLinkStepComplete ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-300 bg-gray-100 text-gray-500'}`}>
                         {figmaAccessStepComplete ? <Check className="h-4 w-4" /> : '3'}
                       </span>
                       <div className="min-w-0 flex-1">
@@ -1331,9 +1366,9 @@ export default function UploadStep({
                     </div>
                   </div>
 
-                  <div className={`rounded-[18px] border p-5 ${hasFigmaFrameImages ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : figmaAccessStepComplete ? 'border-blue-500/40 bg-[#272729]' : 'border-white/8 bg-[#202022] opacity-60'}`}>
+                  <div className={`rounded-[18px] border p-5 ${hasFigmaFrameImages ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : figmaAccessStepComplete ? 'border-blue-500/80 bg-[#272729]' : 'border-gray-200 bg-[#18181a]'}`}>
                     <div className="flex items-start gap-4">
-                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${hasFigmaFrameImages ? 'bg-emerald-500 text-white' : figmaAccessStepComplete ? 'bg-blue-500 text-white' : 'bg-white/8 text-white/30'}`}>
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${hasFigmaFrameImages ? 'border-emerald-500 bg-emerald-500 text-white' : figmaAccessStepComplete ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-300 bg-gray-100 text-gray-500'}`}>
                         {hasFigmaFrameImages ? <Check className="h-4 w-4" /> : '4'}
                       </span>
                       <div className="min-w-0 flex-1">
@@ -1394,7 +1429,7 @@ export default function UploadStep({
                       이미지 파일로 테스트
                     </h3>
                     <p className="mt-1 text-sm text-gray-500">
-                      기존 PNG/JPG 업로드 방식으로 단일 화면 또는 A/B 화면을 비교합니다.
+                      PNG/JPG 화면으로 전체 Flow UT를 구성하거나 A/B 화면을 비교합니다.
                     </p>
                   </div>
                 </div>
@@ -1434,6 +1469,11 @@ export default function UploadStep({
                           onChange={handleSingleFileChange}
                         />
                         <p className="text-xs text-gray-400">{frames.length}개 화면 업로드됨</p>
+                        {frames.length > 1 && (
+                          <p className="text-xs text-blue-600">
+                            다음 단계에서 진입점, 미션, 성공 지점을 설정합니다.
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1549,7 +1589,7 @@ export default function UploadStep({
                 <div className="flex items-center gap-3">
                   <span
                     className={`flex h-6 w-6 items-center justify-center rounded-full ${
-                      sourceReady ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/8 text-white/30'
+                      sourceReady ? 'bg-emerald-500/15 text-emerald-400' : 'bg-gray-100 text-gray-400'
                     }`}
                   >
                     {sourceReady ? <Check className="h-3.5 w-3.5" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
@@ -1565,7 +1605,7 @@ export default function UploadStep({
                 <div className="flex items-center gap-3">
                   <span
                     className={`flex h-6 w-6 items-center justify-center rounded-full ${
-                      hasApiKey ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/8 text-white/30'
+                      hasApiKey ? 'bg-emerald-500/15 text-emerald-400' : 'bg-gray-100 text-gray-400'
                     }`}
                   >
                     {hasApiKey ? <Check className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" />}

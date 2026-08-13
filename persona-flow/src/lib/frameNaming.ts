@@ -29,8 +29,12 @@ export function getFrameSecondaryLabel(
 }
 
 export function getFrameDisplayName(frame: FrameLabel): string {
+  const primary = frame.name.trim()
   const secondary = getFrameSecondaryLabel(frame)
-  return secondary ? `${frame.name} · ${secondary}` : frame.name
+  const isDuplicate =
+    secondary.localeCompare(primary, undefined, { sensitivity: 'base' }) === 0
+
+  return secondary && !isDuplicate ? `${primary} · ${secondary}` : primary
 }
 
 export function getFrameProjectLabel(frame: FrameLabel): string {

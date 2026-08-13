@@ -119,7 +119,7 @@ export default function Dashboard({ onNewTest }: DashboardProps) {
       </nav>
 
       {/* 히어로 섹션 */}
-      <section className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white py-24 px-6">
+      <section className="bg-gradient-to-br from-[#006fdd] to-[#2f3f9f] text-white py-24 px-6">
         <div className="max-w-4xl mx-auto text-center space-y-6">
           <h1 className="text-4xl sm:text-5xl font-bold leading-tight">
             시안 단계에서 바로 유저테스트를
@@ -259,7 +259,7 @@ export default function Dashboard({ onNewTest }: DashboardProps) {
       </section>
 
       {/* 하단 CTA */}
-      <section className="py-20 px-6 bg-gradient-to-br from-blue-600 to-indigo-700 text-white text-center">
+      <section className="py-20 px-6 bg-gradient-to-br from-[#006fdd] to-[#2f3f9f] text-white text-center">
         <div className="max-w-2xl mx-auto space-y-6">
           <h2 className="text-3xl font-bold">지금 바로 시작해보세요</h2>
           <p className="text-blue-100 text-lg">

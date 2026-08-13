@@ -7,6 +7,17 @@ import {
   ChevronDown,
   ChevronUp,
   GitCompare,
+  Route,
+  Target,
+  MousePointerClick,
+  Gauge,
+  Split,
+  RotateCcw,
+  ArrowRight,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Clock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -21,6 +32,7 @@ import type {
   ChatMessage,
   FeedbackThread,
   Frame,
+  FlowOutcome,
 } from '@/types'
 
 interface ReportPageProps {
@@ -59,6 +71,14 @@ function scoreBarColor(score: number) {
   return '[&>div]:bg-green-500'
 }
 
+function formatDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.round(totalSeconds))
+  if (seconds < 60) return `${seconds}초`
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  return remainder > 0 ? `${minutes}분 ${remainder}초` : `${minutes}분`
+}
+
 function findReportFrame(
   report: TestReport,
   frameId: string
@@ -92,6 +112,12 @@ const EMOTION_META: Record<WalkEmotion, { label: string; cls: string; emoji: str
   frustrated: { label: '불만', cls: 'bg-red-50 border-red-200 text-red-700', emoji: '😣' },
 }
 
+const VERIFICATION_META = {
+  verified: { label: '화면 근거 일치', cls: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+  partial: { label: '부분 근거', cls: 'border-amber-200 bg-amber-50 text-amber-700' },
+  unverified: { label: '근거 부족', cls: 'border-gray-200 bg-gray-50 text-gray-500' },
+} as const
+
 /* ── 탭1 요약 ── */
 function SummaryTab({ report }: { report: TestReport }) {
   const criticalCount = report.findings.filter((f) => f.severity === 'critical').length
@@ -100,6 +126,53 @@ function SummaryTab({ report }: { report: TestReport }) {
 
   return (
     <div className="space-y-5">
+      {report.validation && (
+        <div className="overflow-hidden rounded-md border border-blue-200 bg-blue-50/60">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-100 px-4 py-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">분석 근거 검증</p>
+              <p className="mt-1 text-xs text-blue-700">
+                화면 ID, Figma 원문, 이미지 판독 결과를 로컬 규칙으로 교차 확인했습니다.
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-2xl font-bold text-blue-700">{report.validation.score}</p>
+              <p className="text-[11px] text-blue-600">근거 신뢰 점수 / 100</p>
+            </div>
+          </div>
+          <div className="grid gap-3 px-4 py-3 sm:grid-cols-3">
+            <div>
+              <p className="text-xs text-gray-500">검증된 발견점</p>
+              <p className="mt-0.5 text-sm font-semibold text-gray-800">
+                {report.validation.verifiedFindings} / {report.validation.totalFindings}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">검증된 행동 단계</p>
+              <p className="mt-0.5 text-sm font-semibold text-gray-800">
+                {report.validation.verifiedWalkthroughSteps} / {report.validation.totalWalkthroughSteps}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">구조 데이터 포함 화면</p>
+              <p className="mt-0.5 text-sm font-semibold text-gray-800">
+                {report.validation.inputCoverage.metadataFrames} / {report.validation.inputCoverage.totalFrames}
+              </p>
+            </div>
+          </div>
+          {report.validation.warnings.length > 0 && (
+            <div className="border-t border-blue-100 px-4 py-3">
+              {report.validation.warnings.map((warning) => (
+                <p key={warning} className="flex gap-2 text-xs leading-relaxed text-gray-600">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-blue-500" />
+                  {warning}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 2열 레이아웃: 6축 점수(좌) + 태스크 지표(우) */}
       <div className="grid grid-cols-3 gap-4">
         {/* 6축 점수 (좌측 2/3) */}
@@ -126,7 +199,7 @@ function SummaryTab({ report }: { report: TestReport }) {
         {/* 태스크 지표 (우측 1/3) */}
         <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100">
-            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">태스크 지표</h3>
+            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">AI 시뮬레이션 지표</h3>
           </div>
           <div className="p-4 space-y-4">
             <div>
@@ -145,6 +218,11 @@ function SummaryTab({ report }: { report: TestReport }) {
               <p className="text-sm font-bold text-amber-600 break-keep">{report.taskMetrics.dropoffPoint}</p>
               <p className="text-xs text-gray-500 mt-0.5">주요 이탈 지점</p>
             </div>
+            {report.taskMetrics.disclaimer && (
+              <p className="border-t border-gray-100 pt-3 text-[11px] leading-relaxed text-gray-400">
+                {report.taskMetrics.disclaimer}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -302,6 +380,9 @@ function ABComparisonTab({ report }: { report: TestReport }) {
           </div>
         ))}
       </div>
+      <p className="text-[11px] leading-relaxed text-gray-400">
+        A/B 완료율과 오류율은 실제 트래픽 실험값이 아니라 동일 조건의 AI 시뮬레이션 추정치입니다.
+      </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
@@ -399,6 +480,32 @@ function FindingRow({ finding, frameName }: { finding: Finding; frameName?: stri
               <p className="text-sm text-gray-700 bg-white border border-green-200 rounded px-3 py-2">{finding.suggestion}</p>
             </div>
           </div>
+
+          {finding.evidence && (
+            <div>
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold text-blue-700">화면 근거</p>
+                  {finding.verification && (
+                    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${VERIFICATION_META[finding.verification].cls}`}>
+                      {VERIFICATION_META[finding.verification].label}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] font-medium text-gray-500">
+                  {finding.confidence !== undefined ? `검증 후 확신 ${finding.confidence}%` : ''}
+                </span>
+              </div>
+              <p className="rounded border border-blue-100 bg-blue-50/70 px-3 py-2 text-sm text-gray-700">
+                {finding.evidence}
+              </p>
+              {finding.matchedEvidence && finding.matchedEvidence.length > 0 && (
+                <p className="mt-1 text-[11px] text-emerald-700">
+                  일치한 원문: {finding.matchedEvidence.map((item) => `“${item}”`).join(', ')}
+                </p>
+              )}
+            </div>
+          )}
 
           {finding.frameId && (
             <p className="text-xs text-gray-400">
@@ -840,6 +947,18 @@ function WalkthroughTab({ report }: { report: TestReport }) {
                           </span>
                         </div>
                         <p className="text-sm text-gray-800 font-medium">{step.action}</p>
+                        {step.verification && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${VERIFICATION_META[step.verification].cls}`}>
+                              {VERIFICATION_META[step.verification].label}
+                            </span>
+                            {step.matchedEvidence && step.matchedEvidence.length > 0 && (
+                              <span className="text-[11px] text-emerald-700">
+                                {step.matchedEvidence.map((item) => `“${item}”`).join(', ')}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         <p className="text-xs text-gray-500 italic leading-relaxed">
                           “{step.thought}”
                         </p>
@@ -856,8 +975,440 @@ function WalkthroughTab({ report }: { report: TestReport }) {
   )
 }
 
+const FLOW_OUTCOME_META: Record<
+  FlowOutcome,
+  { label: string; className: string; icon: typeof CheckCircle2 }
+> = {
+  success: {
+    label: '성공',
+    className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    icon: CheckCircle2,
+  },
+  partial: {
+    label: '부분 성공',
+    className: 'border-blue-200 bg-blue-50 text-blue-700',
+    icon: AlertCircle,
+  },
+  failed: {
+    label: '실패',
+    className: 'border-red-200 bg-red-50 text-red-700',
+    icon: XCircle,
+  },
+  abandoned: {
+    label: '중단',
+    className: 'border-amber-200 bg-amber-50 text-amber-700',
+    icon: AlertCircle,
+  },
+}
+
+function FlowUTTab({ report }: { report: TestReport }) {
+  const result = report.flowResult
+  if (!result) return null
+
+  const { config, metrics, runs, frictions } = result
+  const orderedFrames = [...report.frames].sort(
+    (a, b) => (a.flowOrder ?? Number.MAX_SAFE_INTEGER) - (b.flowOrder ?? Number.MAX_SAFE_INTEGER)
+  )
+  const visitCounts = new Map<string, number>()
+  for (const run of runs) {
+    visitCounts.set(config.entryFrameId, (visitCounts.get(config.entryFrameId) ?? 0) + 1)
+    for (const event of run.events) {
+      if (event.toFrameId) {
+        visitCounts.set(event.toFrameId, (visitCounts.get(event.toFrameId) ?? 0) + 1)
+      }
+    }
+  }
+
+  const metricCards = [
+    {
+      label: '과업 성공률',
+      value: `${metrics.successRate}%`,
+      note: `${runs.filter((run) => run.outcome === 'success').length}/${runs.length}개 run 성공`,
+      icon: Target,
+      color: 'text-emerald-600 bg-emerald-50',
+    },
+    {
+      label: '첫 행동 정확도',
+      value: `${metrics.firstActionAccuracy}%`,
+      note: '기대 경로의 첫 행동 선택',
+      icon: MousePointerClick,
+      color: 'text-blue-600 bg-blue-50',
+    },
+    {
+      label: '평균 행동 단계',
+      value: metrics.avgSteps.toFixed(1),
+      note: '성공·실패 run 전체',
+      icon: Gauge,
+      color: 'text-indigo-600 bg-indigo-50',
+    },
+    {
+      label: '평균 예상 시간',
+      value: formatDuration(metrics.avgTaskDurationSeconds ?? 0),
+      note: 'AI 망설임 기반 추정',
+      icon: Clock,
+      color: 'text-cyan-600 bg-cyan-50',
+    },
+    {
+      label: '경로 효율',
+      value: `${metrics.pathEfficiency}%`,
+      note: `우회율 ${metrics.divergenceRate}%`,
+      icon: Split,
+      color: 'text-violet-600 bg-violet-50',
+    },
+    {
+      label: '마찰 후 회복률',
+      value: `${metrics.recoveryRate}%`,
+      note: '마찰을 겪고도 성공한 비율',
+      icon: RotateCcw,
+      color: 'text-amber-600 bg-amber-50',
+    },
+  ]
+
+  return (
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-lg bg-slate-950 text-white">
+        <div className="grid gap-5 p-5 lg:grid-cols-[1.35fr_0.65fr]">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-blue-300">
+              <Route className="h-4 w-4" />
+              Flow mission
+            </div>
+            <h2 className="mt-3 text-lg font-semibold leading-relaxed">{config.mission}</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">{config.scenario}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <p className="text-slate-400">진입점</p>
+              <p className="mt-1 font-semibold text-white">
+                {frameNameFromReport(report, config.entryFrameId)}
+              </p>
+            </div>
+            <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <p className="text-slate-400">성공 지점</p>
+              <p className="mt-1 font-semibold text-white">
+                {frameNameFromReport(report, config.successFrameId)}
+              </p>
+            </div>
+            <div className="col-span-2 rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <p className="text-slate-400">실행 범위</p>
+              <p className="mt-1 font-semibold text-white">
+                {report.personas.length}개 페르소나 · 최대 {config.maxSteps}단계
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        {metricCards.map((metric) => {
+          const Icon = metric.icon
+          return (
+            <div key={metric.label} className="rounded-lg border border-gray-200 bg-white p-4">
+              <div className={`flex h-8 w-8 items-center justify-center rounded-md ${metric.color}`}>
+                <Icon className="h-4 w-4" />
+              </div>
+              <p className="mt-3 text-2xl font-bold tracking-tight text-gray-950">{metric.value}</p>
+              <p className="mt-1 text-xs font-semibold text-gray-700">{metric.label}</p>
+              <p className="mt-1 text-[11px] text-gray-400">{metric.note}</p>
+            </div>
+          )
+        })}
+      </section>
+
+      <section className="rounded-lg border border-gray-200 bg-white p-4">
+        <p className="text-sm leading-relaxed text-gray-700">{result.summary}</p>
+        <p className="mt-2 text-[11px] font-medium text-gray-400">
+          AI 시뮬레이션 결과 · 실제 사용자 조사 결과가 아닙니다
+        </p>
+      </section>
+
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <section className="rounded-lg border border-gray-200 bg-white">
+          <div className="border-b border-gray-100 px-4 py-3">
+            <h3 className="text-sm font-semibold text-gray-900">Journey map</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              기본 화면 순서와 실제 run의 방문 횟수를 함께 보여줍니다.
+            </p>
+          </div>
+          <div className="overflow-x-auto p-4">
+            <div className="flex min-w-max items-start gap-2">
+              {orderedFrames.map((frame, index) => {
+                const isEntry = frame.id === config.entryFrameId
+                const isSuccess = frame.id === config.successFrameId
+                const isDropoff = frame.id === metrics.dropoffFrameId
+                return (
+                  <div key={frame.id} className="flex items-center gap-2">
+                    <div
+                      className={`w-44 overflow-hidden rounded-md border ${
+                        isEntry
+                          ? 'border-blue-400'
+                          : isSuccess
+                          ? 'border-emerald-400'
+                          : isDropoff
+                          ? 'border-red-400'
+                          : 'border-gray-200'
+                      }`}
+                    >
+                      <div className="aspect-[16/10] bg-gray-100">
+                        {frame.imageUrl ? (
+                          <img
+                            src={frame.imageUrl}
+                            alt=""
+                            className="h-full w-full object-cover object-top"
+                          />
+                        ) : null}
+                      </div>
+                      <div className="p-2.5">
+                        <div className="flex flex-wrap gap-1">
+                          {isEntry && (
+                            <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
+                              시작
+                            </span>
+                          )}
+                          {isSuccess && (
+                            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              성공
+                            </span>
+                          )}
+                          {isDropoff && (
+                            <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
+                              주요 이탈
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 truncate text-xs font-semibold text-gray-800">
+                          {getFrameDisplayName(frame)}
+                        </p>
+                        <p className="mt-1 text-[11px] text-gray-400">
+                          {visitCounts.get(frame.id) ?? 0}회 방문
+                        </p>
+                      </div>
+                    </div>
+                    {index < orderedFrames.length - 1 && (
+                      <ArrowRight className="h-4 w-4 flex-shrink-0 text-gray-300" />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+          <div className="border-t border-gray-100 p-4">
+            <p className="text-xs font-semibold text-gray-700">
+              숨겨진 화면 연결 · 테스트 종료 후 공개
+            </p>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              {config.edges.map((edge) => (
+                <div
+                  key={edge.id}
+                  className="flex items-center gap-2 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600"
+                >
+                  <span className="max-w-24 truncate font-medium">
+                    {frameNameFromReport(report, edge.fromFrameId)}
+                  </span>
+                  <ArrowRight className="h-3 w-3 flex-shrink-0 text-gray-400" />
+                  <span className="max-w-24 truncate font-medium">
+                    {frameNameFromReport(report, edge.toFrameId)}
+                  </span>
+                  <span className="ml-auto max-w-32 truncate text-gray-400">
+                    {edge.actionLabel}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-gray-200 bg-white">
+          <div className="border-b border-gray-100 px-4 py-3">
+            <h3 className="text-sm font-semibold text-gray-900">
+              주요 마찰 ({frictions.length})
+            </h3>
+            <p className="mt-1 text-xs text-gray-500">
+              발생 빈도와 과업 실패 영향을 기준으로 정렬했습니다.
+            </p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {frictions.length === 0 ? (
+              <p className="px-4 py-8 text-center text-xs text-gray-400">
+                반복적으로 감지된 마찰이 없습니다.
+              </p>
+            ) : (
+              frictions.map((friction) => (
+                <div key={friction.id} className="p-4">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${severityBadgeClass[friction.severity]}`}
+                    >
+                      {severityLabel[friction.severity]}
+                    </span>
+                    <span className="text-[11px] text-gray-400">
+                      {friction.affectedRunCount}개 run
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold text-gray-900">{friction.title}</p>
+                  {friction.frameId && (
+                    <p className="mt-1 text-[11px] text-gray-400">
+                      {frameNameFromReport(report, friction.frameId)}
+                    </p>
+                  )}
+                  <p className="mt-2 text-xs leading-relaxed text-gray-600">
+                    {friction.recommendation}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">Tester sessions</h3>
+          <p className="mt-1 text-xs text-gray-500">
+            각 페르소나가 어떤 행동을 선택했고 무엇을 기대했는지 확인합니다.
+          </p>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {runs.map((run) => {
+            const outcome = FLOW_OUTCOME_META[run.outcome]
+            const OutcomeIcon = outcome.icon
+            const runDuration = run.events.reduce(
+              (sum, event) => sum + (event.estimatedDurationSeconds ?? 0),
+              0
+            )
+            return (
+              <article key={run.id} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+                <div className="flex items-start justify-between gap-3 border-b border-gray-100 bg-gray-50 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{run.personaName}</p>
+                    <p className="mt-1 text-xs text-gray-500">{run.summary}</p>
+                  </div>
+                  <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
+                    <span
+                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold ${outcome.className}`}
+                    >
+                      <OutcomeIcon className="h-3 w-3" />
+                      {outcome.label}
+                    </span>
+                    <span className="flex items-center gap-1 text-[11px] text-gray-400">
+                      <Clock className="h-3 w-3" />
+                      예상 {formatDuration(runDuration)}
+                    </span>
+                  </div>
+                </div>
+                <ol className="space-y-0 p-4">
+                  {run.events.map((event, index) => (
+                    <li key={event.id} className="grid grid-cols-[24px_1fr] gap-3">
+                      <div className="flex flex-col items-center">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[10px] font-semibold text-white">
+                          {event.step}
+                        </span>
+                        {index < run.events.length - 1 && (
+                          <span className="mt-1 w-px flex-1 bg-gray-200" />
+                        )}
+                      </div>
+                      <div className="pb-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-400">
+                          <p>
+                            {frameNameFromReport(report, event.fromFrameId)}
+                            {event.toFrameId
+                              ? ` → ${frameNameFromReport(report, event.toFrameId)}`
+                              : ''}
+                          </p>
+                          <span>
+                            예상 {formatDuration(event.estimatedDurationSeconds ?? 0)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs font-semibold text-gray-800">
+                          AI 선택 · {event.action}
+                        </p>
+                        {event.observedElement && (
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-blue-700">
+                            <span>
+                              실제 확인 요소 · {event.observedElement}
+                              {event.confidence !== undefined ? ` · 검증 후 확신 ${event.confidence}%` : ''}
+                            </span>
+                            {event.verification && (
+                              <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${VERIFICATION_META[event.verification].cls}`}>
+                                {VERIFICATION_META[event.verification].label}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {event.evidence && (
+                          <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
+                            화면 근거 · {event.evidence}
+                          </p>
+                        )}
+                        {event.matchedEvidence && event.matchedEvidence.length > 0 && (
+                          <p className="mt-1 text-[11px] text-emerald-700">
+                            일치한 원문 · {event.matchedEvidence.map((item) => `“${item}”`).join(', ')}
+                          </p>
+                        )}
+                        {event.expectedAction && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                            <span className="text-gray-400">
+                              내부 기준 · {event.expectedAction}
+                            </span>
+                            <span
+                              className={`rounded px-1.5 py-0.5 font-semibold ${
+                                event.transitionMatched
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : 'bg-red-50 text-red-700'
+                              }`}
+                            >
+                              {event.transitionMatched ? '일치' : '불일치'}
+                            </span>
+                          </div>
+                        )}
+                        <p className="mt-1 text-xs leading-relaxed text-gray-500">
+                          기대: {event.expectation}
+                        </p>
+                        <div className="mt-2 rounded-md bg-gray-50 px-2.5 py-2">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                            Think Aloud
+                          </p>
+                          <p className="mt-1 text-xs italic leading-relaxed text-gray-600">
+                            “{event.thought}”
+                          </p>
+                        </div>
+                        {event.friction && (
+                          <p className="mt-2 rounded-md bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
+                            마찰 · {event.friction}
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+                {run.interview && run.interview.length > 0 && (
+                  <div className="border-t border-gray-100 bg-blue-50/40 p-4">
+                    <p className="text-xs font-semibold text-blue-950">사후 인터뷰</p>
+                    <div className="mt-3 space-y-3">
+                      {run.interview.map((item, index) => (
+                        <div key={`${run.id}-interview-${index}`}>
+                          <p className="text-[11px] font-semibold text-gray-700">
+                            Q. {item.question}
+                          </p>
+                          <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                            A. {item.answer}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </article>
+            )
+          })}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 /* ── 탭 타입 ── */
-type ReportTab = 'summary' | 'ab' | 'findings' | 'walkthrough' | 'chat'
+type ReportTab = 'flow' | 'summary' | 'ab' | 'findings' | 'walkthrough' | 'chat'
 
 function downloadJson(report: TestReport) {
   const {
@@ -869,11 +1420,14 @@ function downloadJson(report: TestReport) {
     variants,
     abConfig,
     abComparison,
+    flowConfig,
+    flowResult,
     axisScores,
     findings,
     taskMetrics,
     overallSummary,
     walkthrough,
+    validation,
     feedbackThreads,
   } =
     report
@@ -894,11 +1448,14 @@ function downloadJson(report: TestReport) {
     variants,
     abConfig,
     abComparison,
+    flowConfig,
+    flowResult,
     axisScores,
     findings,
     taskMetrics,
     overallSummary,
     walkthrough,
+    validation,
     feedbackThreads,
   }
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
@@ -919,7 +1476,9 @@ export default function ReportPage({
   onRequireKey,
   onFeedbackThreadsChange,
 }: ReportPageProps) {
-  const [activeTab, setActiveTab] = useState<ReportTab>('summary')
+  const [activeTab, setActiveTab] = useState<ReportTab>(
+    report.flowResult ? 'flow' : 'summary'
+  )
 
   const findingsCount = report.findings.length
   const walkCount = report.walkthrough?.length ?? 0
@@ -933,6 +1492,7 @@ export default function ReportPage({
   }).format(report.createdAt)
 
   const tabs: { key: ReportTab; label: string }[] = [
+    ...(report.flowResult ? [{ key: 'flow' as const, label: 'Flow UT' }] : []),
     { key: 'summary', label: '요약' },
     ...(report.abComparison ? [{ key: 'ab' as const, label: 'A/B 비교' }] : []),
     { key: 'findings', label: `발견된 문제 (${findingsCount})` },
@@ -997,6 +1557,7 @@ export default function ReportPage({
       {/* 탭 컨텐츠 */}
       <div className="flex-1 overflow-auto px-10 py-8">
         <div className="mx-auto max-w-[1180px]">
+        {activeTab === 'flow' && <FlowUTTab report={report} />}
         {activeTab === 'summary' && <SummaryTab report={report} />}
         {activeTab === 'ab' && <ABComparisonTab report={report} />}
         {activeTab === 'findings' && <FindingsTab report={report} />}

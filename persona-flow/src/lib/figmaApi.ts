@@ -1,4 +1,4 @@
-import type { FigmaSource, Frame } from '@/types'
+import type { FigmaSource, Frame, FrameDesignContext, PrototypeTransition } from '@/types'
 
 const FIGMA_API_BASE = 'https://api.figma.com/v1'
 const RENDERABLE_TYPES = new Set(['FRAME', 'COMPONENT', 'INSTANCE'])
@@ -10,6 +10,20 @@ interface FigmaNode {
   id: string
   name: string
   type: string
+  visible?: boolean
+  characters?: string
+  absoluteBoundingBox?: {
+    width: number
+    height: number
+  }
+  reactions?: Array<{
+    trigger?: { type?: string }
+    action?: {
+      type?: string
+      destinationId?: string
+      navigation?: string
+    }
+  }>
   children?: FigmaNode[]
 }
 
@@ -142,6 +156,99 @@ function uniqueNodes(nodes: FigmaNode[]): FigmaNode[] {
   })
 }
 
+function uniqueTrimmed(values: string[], limit: number): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const rawValue of values) {
+    const value = rawValue.replace(/\s+/g, ' ').trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    result.push(value)
+    if (result.length >= limit) break
+  }
+  return result
+}
+
+function readableFigmaToken(value: string | undefined, fallback: string): string {
+  if (!value) return fallback
+  return value.toLocaleLowerCase('en-US').replace(/_/g, ' ')
+}
+
+function designContextFromNode(root: FigmaNode): FrameDesignContext {
+  const visibleTexts: string[] = []
+  const componentLabels: string[] = []
+  const interactiveLabels: string[] = []
+  const structureLabels: string[] = []
+  const prototypeTransitions: PrototypeTransition[] = []
+  let visited = 0
+
+  const visit = (node: FigmaNode, depth: number) => {
+    if (visited >= 600 || node.visible === false) return
+    visited += 1
+
+    if (node.type === 'TEXT' && node.characters) visibleTexts.push(node.characters)
+    if (node.type === 'COMPONENT' || node.type === 'INSTANCE') {
+      componentLabels.push(node.name)
+    }
+    if (depth <= 2 && node !== root) {
+      structureLabels.push(`${node.type}: ${node.name}`)
+    }
+
+    for (const reaction of node.reactions ?? []) {
+      const trigger = readableFigmaToken(reaction.trigger?.type, 'interaction')
+      const action = readableFigmaToken(
+        reaction.action?.navigation ?? reaction.action?.type,
+        'navigate'
+      )
+      interactiveLabels.push(node.name)
+      prototypeTransitions.push({
+        trigger,
+        action,
+        sourceNodeName: node.name,
+        destinationNodeId: reaction.action?.destinationId,
+      })
+    }
+
+    for (const child of node.children ?? []) visit(child, depth + 1)
+  }
+
+  visit(root, 0)
+  const box = root.absoluteBoundingBox
+  return {
+    source: 'figma_api',
+    visibleTexts: uniqueTrimmed(visibleTexts, 100),
+    componentLabels: uniqueTrimmed(componentLabels, 60),
+    interactiveLabels: uniqueTrimmed(interactiveLabels, 60),
+    structureLabels: uniqueTrimmed(structureLabels, 80),
+    prototypeTransitions: prototypeTransitions.slice(0, 80),
+    dimensions:
+      box && Number.isFinite(box.width) && Number.isFinite(box.height)
+        ? { width: Math.round(box.width), height: Math.round(box.height) }
+        : undefined,
+  }
+}
+
+async function fetchDetailedNodes(
+  fileKey: string,
+  nodeIds: string[],
+  token: string
+): Promise<Map<string, FigmaNode>> {
+  if (nodeIds.length === 0) return new Map()
+  const params = new URLSearchParams({
+    ids: nodeIds.join(','),
+    depth: '6',
+  })
+  const data = await fetchFigmaJson<FigmaNodesResponse>(
+    `/files/${encodeURIComponent(fileKey)}/nodes?${params.toString()}`,
+    token
+  )
+  return new Map(
+    Object.entries(data.nodes ?? []).flatMap(([id, entry]) =>
+      entry?.document ? [[id, entry.document] as const] : []
+    )
+  )
+}
+
 async function fetchImageUrls(
   fileKey: string,
   nodeIds: string[],
@@ -152,7 +259,7 @@ async function fetchImageUrls(
   const params = new URLSearchParams({
     ids: nodeIds.join(','),
     format: 'png',
-    scale: '1',
+    scale: '2',
   })
 
   const data = await fetchFigmaJson<FigmaImagesResponse>(
@@ -187,6 +294,7 @@ function frameFromNode(
     figmaNodeId: node.id,
     figmaVersionId: source.versionId,
     figmaUrl: source.url,
+    designContext: designContextFromNode(node),
   }
 }
 
@@ -245,11 +353,17 @@ export async function importFigmaFrames(
     limitedNodes.map((node) => node.id),
     cleanToken
   )
+  const detailedNodes = await fetchDetailedNodes(
+    source.fileKey,
+    limitedNodes.map((node) => node.id),
+    cleanToken
+  )
 
   return {
     source: importedSource,
-    frames: limitedNodes.map((node, index) =>
-      frameFromNode(node, importedSource, imageUrls[node.id] ?? '', index)
-    ),
+    frames: limitedNodes.map((node, index) => {
+      const detailedNode = detailedNodes.get(node.id) ?? node
+      return frameFromNode(detailedNode, importedSource, imageUrls[node.id] ?? '', index)
+    }),
   }
 }

@@ -40,6 +40,7 @@ function normalizeFrame(frame: Frame): Frame {
     figmaNodeId: frame.figmaNodeId,
     figmaVersionId: frame.figmaVersionId,
     figmaUrl: frame.figmaUrl,
+    designContext: frame.designContext,
   }
 }
 

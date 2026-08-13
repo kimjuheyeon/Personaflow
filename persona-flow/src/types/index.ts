@@ -5,6 +5,9 @@ export type TestMode = 'single' | 'ab'
 export type VariantId = 'A' | 'B'
 export type SourceType = 'figma' | 'image'
 export type AIMode = 'demo' | 'gemini_free'
+export type StudyMode = 'flow' | 'screen'
+export type EvidenceVerification = 'verified' | 'partial' | 'unverified'
+export type MetricProvenance = 'ai_estimate' | 'simulation_aggregate' | 'observed'
 
 export interface FigmaSource {
   url: string
@@ -14,6 +17,26 @@ export interface FigmaSource {
   fileName?: string
   selectionLabel?: string
   connectedAt: Date
+}
+
+export interface PrototypeTransition {
+  trigger: string
+  action: string
+  sourceNodeName: string
+  destinationNodeId?: string
+}
+
+export interface FrameDesignContext {
+  source: 'figma_api' | 'image_only'
+  visibleTexts: string[]
+  componentLabels: string[]
+  interactiveLabels: string[]
+  structureLabels: string[]
+  prototypeTransitions: PrototypeTransition[]
+  dimensions?: {
+    width: number
+    height: number
+  }
 }
 
 export interface Frame {
@@ -29,6 +52,7 @@ export interface Frame {
   figmaNodeId?: string
   figmaVersionId?: string
   figmaUrl?: string
+  designContext?: FrameDesignContext
 }
 
 export interface DesignVariant {
@@ -41,6 +65,25 @@ export interface ABTestConfig {
   goal: string
   hypothesis: string
   criteria: string[]
+}
+
+export interface FlowEdge {
+  id: string
+  fromFrameId: string
+  toFrameId: string
+  actionLabel: string
+}
+
+export interface FlowTestConfig {
+  mode: StudyMode
+  title: string
+  scenario: string
+  mission: string
+  entryFrameId: string
+  successFrameId: string
+  expectedPathFrameIds: string[]
+  edges: FlowEdge[]
+  maxSteps: number
 }
 
 export interface PersonaConfig {
@@ -72,6 +115,10 @@ export interface Finding {
   taskMetric: string
   suggestion: string
   frameId?: string
+  evidence?: string
+  confidence?: number
+  verification?: EvidenceVerification
+  matchedEvidence?: string[]
 }
 
 export interface TaskMetrics {
@@ -79,6 +126,8 @@ export interface TaskMetrics {
   avgClicks: number
   errorRate: number
   dropoffPoint: string
+  provenance?: MetricProvenance
+  disclaimer?: string
 }
 
 export interface ABVariantScore {
@@ -134,6 +183,94 @@ export interface WalkStep {
   action: string
   thought: string
   emotion: WalkEmotion
+  observedElement?: string
+  evidence?: string
+  confidence?: number
+  verification?: EvidenceVerification
+  matchedEvidence?: string[]
+}
+
+export interface AnalysisValidation {
+  score: number
+  status: 'high' | 'medium' | 'low'
+  verifiedFindings: number
+  totalFindings: number
+  verifiedWalkthroughSteps: number
+  totalWalkthroughSteps: number
+  invalidFrameReferences: number
+  inputCoverage: {
+    totalFrames: number
+    imageFrames: number
+    metadataFrames: number
+  }
+  warnings: string[]
+}
+
+export type FlowOutcome = 'success' | 'partial' | 'failed' | 'abandoned'
+
+export interface FlowInterview {
+  question: string
+  answer: string
+}
+
+export interface FlowEvent {
+  id: string
+  step: number
+  fromFrameId: string
+  toFrameId?: string
+  action: string
+  expectation: string
+  thought: string
+  emotion: WalkEmotion
+  estimatedDurationSeconds?: number
+  expectedAction?: string
+  transitionMatched?: boolean
+  observedElement?: string
+  evidence?: string
+  confidence?: number
+  verification?: EvidenceVerification
+  matchedEvidence?: string[]
+  friction?: string
+  recommendation?: string
+}
+
+export interface FlowRun {
+  id: string
+  personaId: string
+  personaName: string
+  outcome: FlowOutcome
+  events: FlowEvent[]
+  interview?: FlowInterview[]
+  summary: string
+}
+
+export interface FlowMetrics {
+  successRate: number
+  firstActionAccuracy: number
+  avgSteps: number
+  avgTaskDurationSeconds: number
+  pathEfficiency: number
+  divergenceRate: number
+  recoveryRate: number
+  dropoffFrameId?: string
+}
+
+export interface FlowFriction {
+  id: string
+  title: string
+  description: string
+  severity: SeverityLevel
+  frameId?: string
+  affectedRunCount: number
+  recommendation: string
+}
+
+export interface FlowTestResult {
+  config: FlowTestConfig
+  runs: FlowRun[]
+  metrics: FlowMetrics
+  frictions: FlowFriction[]
+  summary: string
 }
 
 export interface TestReport {
@@ -149,6 +286,8 @@ export interface TestReport {
   variants?: DesignVariant[]
   abConfig?: ABTestConfig
   abComparison?: ABComparison
+  flowConfig?: FlowTestConfig
+  flowResult?: FlowTestResult
   axisScores: AxisScore[]
   findings: Finding[]
   taskMetrics: TaskMetrics
@@ -156,6 +295,7 @@ export interface TestReport {
   frameChats: FrameChat[]
   feedbackThreads?: FeedbackThread[]
   walkthrough?: WalkStep[]
+  validation?: AnalysisValidation
 }
 
-export type AppStep = 'upload' | 'persona' | 'running' | 'report'
+export type AppStep = 'upload' | 'flow' | 'persona' | 'running' | 'report'

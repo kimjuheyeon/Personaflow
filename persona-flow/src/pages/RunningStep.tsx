@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Check, Circle, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
-import { analyzeABDesignDemo, analyzeDesignDemo } from '@/lib/ai/demo'
-import { analyzeABDesign, analyzeDesign } from '@/lib/ai/gemini'
+import { analyzeABDesignDemo, analyzeDesignDemo, analyzeFlowDesignDemo } from '@/lib/ai/demo'
+import { analyzeABDesign, analyzeDesign, analyzeFlowDesign } from '@/lib/ai/gemini'
 import { getFrameProjectLabel } from '@/lib/frameNaming'
 import type {
   ABTestConfig,
   AIMode,
   DesignVariant,
   FigmaSource,
+  FlowTestConfig,
   PersonaConfig,
   Frame,
   SourceType,
@@ -23,6 +24,7 @@ interface RunningStepProps {
   testMode: TestMode
   variants: DesignVariant[]
   abConfig: ABTestConfig
+  flowConfig: FlowTestConfig
   sourceType: SourceType
   figmaSource: FigmaSource | null
   aiMode: AIMode
@@ -34,10 +36,17 @@ interface RunningStepProps {
 }
 
 const STEPS = [
-  { label: '화면 구조 분석 중', progress: 25 },
+  { label: '화면 이미지와 Figma 원문 대조 중', progress: 25 },
   { label: '페르소나 시뮬레이션 실행 중', progress: 55 },
   { label: '6축 UX 평가 생성 중', progress: 80 },
-  { label: '리포트 작성 중', progress: 95 },
+  { label: '화면 근거 검증 및 리포트 작성 중', progress: 95 },
+]
+
+const FLOW_STEPS = [
+  { label: '시나리오와 미션 전달 중', progress: 20 },
+  { label: 'Think Aloud 방식으로 Flow 수행 중', progress: 50 },
+  { label: '수행 시간과 성공 여부 집계 중', progress: 78 },
+  { label: '경로 근거 검증 및 리포트 작성 중', progress: 95 },
 ]
 
 const DEVICE_LABEL: Record<string, string> = {
@@ -55,7 +64,8 @@ function buildProjectName(
   testMode: TestMode,
   abConfig: ABTestConfig,
   sourceType: SourceType,
-  figmaSource: FigmaSource | null
+  figmaSource: FigmaSource | null,
+  flowConfig: FlowTestConfig
 ): string {
   if (testMode === 'ab') {
     const goal = abConfig.goal.trim()
@@ -64,6 +74,9 @@ function buildProjectName(
       return `Figma A/B 테스트 · ${label}`
     }
     return goal ? `A/B 테스트 · ${goal}` : '화면 A/B 테스트'
+  }
+  if (flowConfig.mode === 'flow') {
+    return flowConfig.title.trim() || `Flow UT · ${flowConfig.mission.trim() || '사용자 미션'}`
   }
   if (sourceType === 'figma') {
     return figmaSource?.fileName
@@ -81,6 +94,7 @@ export default function RunningStep({
   testMode,
   variants,
   abConfig,
+  flowConfig,
   sourceType,
   figmaSource,
   aiMode,
@@ -90,6 +104,8 @@ export default function RunningStep({
   onBack,
   onRequireKey,
 }: RunningStepProps) {
+  const isFlowTest = testMode === 'single' && flowConfig.mode === 'flow'
+  const stageSteps = isFlowTest ? FLOW_STEPS : STEPS
   const [currentStep, setCurrentStep] = useState(0)
   const [isDone, setIsDone] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -125,25 +141,29 @@ export default function RunningStep({
     setError(null)
     setIsDone(false)
     setCurrentStep(0)
-    setProgress(STEPS[0].progress)
+    setProgress(stageSteps[0].progress)
 
     // 응답 대기 동안 단계 애니메이션 (마지막 단계에서 대기)
     stopStageAnimation()
     let idx = 0
     stageTimerRef.current = setInterval(() => {
-      idx = Math.min(idx + 1, STEPS.length - 1)
+      idx = Math.min(idx + 1, stageSteps.length - 1)
       setCurrentStep(idx)
-      setProgress(STEPS[idx].progress)
+      setProgress(stageSteps[idx].progress)
     }, 1800)
 
     try {
       const result =
-        aiMode === 'demo'
-          ? testMode === 'ab'
+        testMode === 'ab'
+          ? aiMode === 'demo'
             ? await analyzeABDesignDemo(variants, personas, abConfig)
-            : await analyzeDesignDemo(frames, personas, sourceType, figmaSource)
-          : testMode === 'ab'
-          ? await analyzeABDesign(apiKey, model, variants, personas, abConfig)
+            : await analyzeABDesign(apiKey, model, variants, personas, abConfig)
+          : isFlowTest
+          ? aiMode === 'demo'
+            ? await analyzeFlowDesignDemo(frames, personas, flowConfig)
+            : await analyzeFlowDesign(apiKey, model, frames, personas, flowConfig)
+          : aiMode === 'demo'
+          ? await analyzeDesignDemo(frames, personas, sourceType, figmaSource)
           : await analyzeDesign(apiKey, model, frames, personas)
       if (cancelledRef.current) return
       stopStageAnimation()
@@ -152,7 +172,14 @@ export default function RunningStep({
 
       const report: TestReport = {
         id: `report-${Date.now()}`,
-        projectName: buildProjectName(reportFrames, testMode, abConfig, sourceType, figmaSource),
+        projectName: buildProjectName(
+          reportFrames,
+          testMode,
+          abConfig,
+          sourceType,
+          figmaSource,
+          flowConfig
+        ),
         createdAt: new Date(),
         sourceType,
         figmaSource: figmaSource ?? undefined,
@@ -163,11 +190,14 @@ export default function RunningStep({
         variants: testMode === 'ab' ? variants : undefined,
         abConfig: testMode === 'ab' ? abConfig : undefined,
         abComparison: result.abComparison,
+        flowConfig: testMode === 'single' ? flowConfig : undefined,
+        flowResult: result.flowResult,
         axisScores: result.axisScores,
         findings: result.findings,
         taskMetrics: result.taskMetrics,
         overallSummary: result.overallSummary,
         walkthrough: result.walkthrough,
+        validation: result.validation,
         frameChats: reportFrames.map((f) => ({ frameId: f.id, messages: [] })),
         feedbackThreads: [],
       }
@@ -187,12 +217,15 @@ export default function RunningStep({
     aiMode,
     apiKey,
     figmaSource,
+    flowConfig,
     frames,
+    isFlowTest,
     model,
     personas,
     sourceType,
     testMode,
     variants,
+    stageSteps,
     onComplete,
   ])
 
@@ -257,6 +290,8 @@ export default function RunningStep({
             <p className="mt-1 text-sm text-gray-500">
               {isDone
                 ? '리포트를 불러오는 중입니다...'
+                : isFlowTest
+                ? '페르소나가 진입점에서 미션을 수행하며 행동 경로를 기록하고 있습니다'
                 : '페르소나가 시안을 직접 사용하며 UX를 분석하고 있습니다'}
             </p>
           </div>
@@ -273,7 +308,7 @@ export default function RunningStep({
 
         {/* 단계 리스트 */}
         <div className="overflow-hidden rounded-[18px] border border-white/10 bg-[#272729]">
-          {STEPS.map((step, index) => {
+          {stageSteps.map((step, index) => {
             const isCompleted = index < currentStep || isDone
             const isCurrent = index === currentStep && !isDone
             return (
@@ -361,6 +396,8 @@ export default function RunningStep({
         <p className="text-xs text-gray-400 text-center">
           {testMode === 'ab'
             ? 'Gemini가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
+            : isFlowTest
+            ? 'Gemini가 설정된 행동 연결 안에서 각 페르소나의 미션 수행 경로를 평가합니다'
             : 'Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
         </p>
       </div>

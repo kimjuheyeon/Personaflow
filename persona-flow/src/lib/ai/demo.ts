@@ -5,6 +5,8 @@ import type {
   ABComparison,
   DesignVariant,
   FigmaSource,
+  FlowRun,
+  FlowTestConfig,
   Frame,
   PersonaConfig,
   SourceType,
@@ -12,6 +14,7 @@ import type {
   VariantId,
   WalkStep,
 } from '@/types'
+import { createFlowTestResult, getFlowFrameLabel } from '@/lib/flow'
 
 const DEFAULT_PERSONAS: PersonaConfig[] = [
   {
@@ -162,6 +165,155 @@ export async function analyzeDesignDemo(
         ? '샘플 리포트는 Figma 링크와 화면 메타데이터를 기준으로 빠른 UX 점검 결과를 생성했습니다. 실제 화면 이미지 이해나 프로토타입 연결 자동 탐색은 아직 제한적이므로, 이번 결과는 제품 흐름 검증용 초안으로 보는 것이 적절합니다. 실제 AI 분석을 하려면 개인 액세스 토큰으로 Figma 화면 이미지를 가져온 뒤 Gemini 무료 API 키로 재실행하세요.'
         : '샘플 리포트는 업로드된 화면 순서와 기본 UX 체크리스트를 기준으로 빠른 점검 결과를 생성했습니다. API 키 없이 즉시 제품 흐름을 확인하기 위한 모드이므로, 실제 화면 세부 분석은 Gemini 무료 API 키 연결 후 재실행하는 것이 좋습니다.',
     walkthrough: buildWalkthrough(frames, personas),
+  }
+}
+
+function buildDemoFlowRuns(
+  personas: PersonaConfig[],
+  config: FlowTestConfig
+): FlowRun[] {
+  return personas.map((persona, personaIndex) => {
+    let currentFrameId = config.entryFrameId
+    const events: FlowRun['events'] = []
+
+    for (let stepIndex = 0; stepIndex < config.maxSteps; stepIndex++) {
+      if (currentFrameId === config.successFrameId) break
+      const outgoing = config.edges.filter((edge) => edge.fromFrameId === currentFrameId)
+      const edge =
+        personaIndex === 0 && stepIndex === 0 && outgoing.length > 1
+          ? outgoing[outgoing.length - 1]
+          : outgoing[0]
+
+      if (!edge) {
+        events.push({
+          id: `demo-flow-event-${persona.id}-${stepIndex + 1}`,
+          step: stepIndex + 1,
+          fromFrameId: currentFrameId,
+          action: '다음 행동을 찾는다',
+          expectation: '미션을 계속 수행할 수 있는 명확한 행동을 기대한다.',
+          thought: '여기서 무엇을 해야 할지 모르겠어요.',
+          emotion: 'frustrated',
+          estimatedDurationSeconds: persona.digitalLevel === 'beginner' ? 18 : 10,
+          expectedAction:
+            outgoing.length > 0
+              ? outgoing.map((item) => item.actionLabel).join(' / ')
+              : undefined,
+          transitionMatched: false,
+          friction: '다음 단계로 이어지는 행동을 찾기 어려움',
+          recommendation: '핵심 CTA와 다음 단계의 결과를 더 명확하게 표현하세요.',
+        })
+        break
+      }
+
+      const hasFriction = persona.digitalLevel === 'beginner' && stepIndex === 1
+      events.push({
+        id: `demo-flow-event-${persona.id}-${stepIndex + 1}`,
+        step: stepIndex + 1,
+        fromFrameId: currentFrameId,
+        toFrameId: edge.toFrameId,
+        action: '화면에서 미션과 가장 관련 있어 보이는 요소를 선택한다',
+        expectation: '선택한 행동이 미션 완료에 가까워지기를 기대한다.',
+        thought: hasFriction
+          ? '선택 결과가 바로 설명되지 않아 맞게 진행 중인지 잠시 고민돼요.'
+          : '다음 단계가 예상한 흐름과 이어져 계속 진행할 수 있어요.',
+        emotion: hasFriction ? 'confused' : 'neutral',
+        estimatedDurationSeconds: hasFriction
+          ? 16
+          : persona.digitalLevel === 'beginner'
+          ? 11
+          : 7,
+        expectedAction: edge.actionLabel,
+        transitionMatched: true,
+        friction: hasFriction ? '행동 이후의 진행 상태가 충분히 설명되지 않음' : undefined,
+        recommendation: hasFriction
+          ? '전환 직후 현재 단계와 남은 과정을 명확하게 안내하세요.'
+          : undefined,
+      })
+      currentFrameId = edge.toFrameId
+    }
+
+    const success = currentFrameId === config.successFrameId
+    return {
+      id: `demo-flow-run-${persona.id}`,
+      personaId: persona.id,
+      personaName: persona.name,
+      outcome: success ? 'success' : 'failed',
+      events,
+      interview: [
+        {
+          question: '첫 행동을 왜 선택했나요?',
+          answer:
+            events[0]?.action
+              ? `화면에서 미션과 가장 관련 있어 보이는 요소가 그것이라고 생각했기 때문입니다.`
+              : '첫 화면에서 무엇을 선택해야 할지 판단하기 어려웠습니다.',
+        },
+        {
+          question: '가장 망설였던 순간은 언제였나요?',
+          answer:
+            events.find((event) => event.friction)?.thought ??
+            '다음 화면으로 이동한 직후 현재 위치가 맞는지 확인할 때 잠시 망설였습니다.',
+        },
+        {
+          question: '이 흐름에서 가장 바꾸고 싶은 점은 무엇인가요?',
+          answer: '다음 행동과 선택 결과를 더 분명하게 알려주는 안내를 보강하고 싶습니다.',
+        },
+      ],
+      summary: success
+        ? `${persona.name}은(는) ${events.length}단계로 미션을 완료했습니다.`
+        : `${persona.name}은(는) 다음 행동을 찾지 못해 미션을 완료하지 못했습니다.`,
+    }
+  })
+}
+
+export async function analyzeFlowDesignDemo(
+  frames: Frame[],
+  personas: PersonaConfig[],
+  config: FlowTestConfig
+): Promise<AnalysisResult> {
+  const runs = buildDemoFlowRuns(personas, config)
+  const flowResult = createFlowTestResult(
+    config,
+    runs,
+    '샘플 Flow UT는 진입점에서 성공 지점까지 각 페르소나의 독립 경로를 재생했습니다. 초급 사용자는 중간 전환에서 진행 상태를 이해하는 데 마찰을 경험했으며, 다음 단계 안내를 보강하는 것이 우선입니다.'
+  )
+  const firstFrame = fallbackFrame(frames)
+  const findings = flowResult.frictions.map((friction, index) => ({
+    id: `demo-flow-f-${index + 1}`,
+    severity: friction.severity,
+    axis: 3,
+    axisLabel: '핵심 태스크 완료',
+    heuristic: '닐슨 #1 시스템 상태 가시성',
+    problem: friction.description,
+    taskMetric: `${friction.affectedRunCount}개 run에서 발생`,
+    suggestion: friction.recommendation,
+    frameId: friction.frameId ?? firstFrame.id,
+  }))
+
+  return {
+    axisScores: AXES.map((axis, index) => ({
+      ...axis,
+      score: [76, 72, 68, 71, 64, 66][index] ?? 68,
+    })),
+    findings,
+    taskMetrics: {
+      completionRate: flowResult.metrics.successRate,
+      avgClicks: flowResult.metrics.avgSteps,
+      errorRate: 100 - flowResult.metrics.successRate,
+      dropoffPoint: flowResult.metrics.dropoffFrameId
+        ? getFlowFrameLabel(frames, flowResult.metrics.dropoffFrameId)
+        : '뚜렷한 이탈 지점 없음',
+    },
+    overallSummary: flowResult.summary,
+    walkthrough: runs.flatMap((run) =>
+      run.events.map((event) => ({
+        frameId: event.fromFrameId,
+        personaName: run.personaName,
+        action: event.action,
+        thought: event.thought,
+        emotion: event.emotion,
+      }))
+    ),
+    flowResult,
   }
 }
 

@@ -1,21 +1,24 @@
 import { useState } from 'react'
-import { Check, CircleHelp, History, RotateCcw } from 'lucide-react'
 import UploadStep from './pages/UploadStep'
+import FlowSetupStep from './pages/FlowSetupStep'
 import PersonaStep from './pages/PersonaStep'
 import RunningStep from './pages/RunningStep'
 import ReportPage from './pages/ReportPage'
 import ApiKeyModal from './components/ApiKeyModal'
 import OnboardingModal from './components/OnboardingModal'
+import SNB from './components/SNB'
 import { useApiKey } from './hooks/useApiKey'
 import { getTestHistory, saveTestReport, updateTestReportFeedback } from './lib/history'
 import { imageToBase64 } from './lib/image'
-import { MODEL_OPTIONS } from './lib/ai/keyStore'
+import { createDefaultFlowConfig, syncFlowConfig } from './lib/flow'
 import type {
   ABTestConfig,
   AIMode,
+  AppStep,
   DesignVariant,
   FeedbackThread,
   FigmaSource,
+  FlowTestConfig,
   Frame,
   PersonaConfig,
   SourceType,
@@ -23,19 +26,9 @@ import type {
   TestReport,
 } from './types'
 
-type TestStep = 'upload' | 'persona' | 'running' | 'report'
-
-const STEP_ORDER: TestStep[] = ['upload', 'persona', 'running', 'report']
-
-const STEP_LABELS: Record<TestStep, string> = {
-  upload: '테스트 소스',
-  persona: '페르소나 설정',
-  running: 'AI 테스트 실행',
-  report: '리포트 확인',
-}
-
-const BREADCRUMB: Record<TestStep, string> = {
+const BREADCRUMB: Record<AppStep, string> = {
   upload: '테스트 설정 / 테스트 소스',
+  flow: '테스트 설정 / 미션과 Flow',
   persona: '테스트 설정 / 페르소나 설정',
   running: 'AI 테스트 실행',
   report: '결과 / 리포트 확인',
@@ -56,206 +49,6 @@ function createDefaultVariants(): DesignVariant[] {
   ]
 }
 
-function Sidebar({
-  step,
-  onReset,
-  hasKey,
-  model,
-  onOpenKey,
-  history,
-  currentReportId,
-  onOpenReport,
-  onOpenGuide,
-}: {
-  step: TestStep
-  onReset: () => void
-  hasKey: boolean
-  model: string
-  onOpenKey: () => void
-  history: TestReport[]
-  currentReportId?: string
-  onOpenReport: (report: TestReport) => void
-  onOpenGuide: () => void
-}) {
-  const currentIndex = STEP_ORDER.indexOf(step)
-  const modelLabel = MODEL_OPTIONS.find((m) => m.id === model)?.label ?? model
-
-  // running: 모두 active처럼 (현재), report: 모두 completed
-  const getStepState = (index: number): 'completed' | 'current' | 'future' => {
-    if (step === 'report') return 'completed'
-    if (step === 'running') {
-      if (index < 2) return 'completed'
-      if (index === 2) return 'current'
-      return 'future'
-    }
-    if (index < currentIndex) return 'completed'
-    if (index === currentIndex) return 'current'
-    return 'future'
-  }
-
-  return (
-    <aside className="w-64 min-h-screen bg-black text-white flex flex-col flex-shrink-0">
-      {/* 로고 */}
-      <div className="h-16 px-6 flex items-center border-b border-white/10">
-        <div className="flex items-center gap-2">
-          <span className="text-white font-semibold text-[17px] tracking-[-0.02em]">PersonaFlow</span>
-        </div>
-      </div>
-
-      {/* 새 테스트 시작 버튼 (upload가 아닐 때만) */}
-      {step !== 'upload' && (
-        <div className="px-4 pt-4">
-          <button
-            onClick={onReset}
-            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            새 테스트 시작
-          </button>
-        </div>
-      )}
-
-      {/* 진행 단계 */}
-      <nav className="flex-1 px-4 py-5">
-        <p className="text-xs font-normal text-white/40 mb-3 px-1">
-          진행 단계
-        </p>
-        <ul className="space-y-0.5">
-          {STEP_ORDER.map((s, index) => {
-            const state = getStepState(index)
-            return (
-              <li key={s}>
-                <div
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
-                    state === 'current'
-                      ? 'bg-white/12 text-white'
-                      : 'text-white/55'
-                  }`}
-                >
-                  {/* 아이콘 */}
-                  <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
-                    {state === 'completed' ? (
-                      <Check className="w-3.5 h-3.5 text-green-500" />
-                    ) : state === 'current' ? (
-                      <span className="w-2 h-2 rounded-full bg-[#2997ff] inline-block" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-white/25 inline-block" />
-                    )}
-                  </span>
-                  <span
-                    className={`${
-                      state === 'current'
-                        ? 'font-semibold text-white'
-                        : state === 'completed'
-                        ? 'text-slate-400'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    {STEP_LABELS[s]}
-                  </span>
-                </div>
-                {/* 수직 연결선 */}
-                {index < STEP_ORDER.length - 1 && (
-                  <div className="ml-[22px] w-px h-2 bg-white/15" />
-                )}
-              </li>
-            )
-          })}
-        </ul>
-
-        <div className="mt-7">
-          <div className="flex items-center gap-2 mb-3 px-1">
-            <History className="w-3.5 h-3.5 text-white/40" />
-            <p className="text-xs font-normal text-white/40">
-              테스트 히스토리
-            </p>
-          </div>
-          {history.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-white/30">저장된 테스트 없음</p>
-          ) : (
-            <ul className="space-y-1">
-              {history.slice(0, 6).map((item) => {
-                const isActive = step === 'report' && currentReportId === item.id
-                const feedbackCount =
-                  item.feedbackThreads?.reduce(
-                    (count, thread) => count + thread.messages.length,
-                    0
-                  ) ?? 0
-                const createdAt = new Intl.DateTimeFormat('ko-KR', {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                }).format(item.createdAt)
-
-                return (
-                  <li key={item.id}>
-                    <button
-                      onClick={() => onOpenReport(item)}
-                      className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                        isActive
-                          ? 'bg-white/12 text-white'
-                          : 'text-white/55 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      <span className="block truncate text-xs font-medium">
-                        {item.projectName}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[10px] text-slate-500">
-                        {item.testMode === 'ab' ? 'A/B · ' : ''}
-                        {createdAt} · 피드백 {feedbackCount}개
-                      </span>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </div>
-      </nav>
-
-      <div className="px-4 pb-3">
-        <button
-          type="button"
-          onClick={onOpenGuide}
-          className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-xs text-white/50 transition-colors hover:bg-white/10 hover:text-white"
-        >
-          <CircleHelp className="h-3.5 w-3.5" />
-          사용 가이드
-        </button>
-      </div>
-
-      {/* API 키 상태 */}
-      <div className="px-4 py-3 border-t border-white/10">
-        <button
-          onClick={onOpenKey}
-          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-        >
-          <span
-            className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              hasKey ? 'bg-green-400' : 'bg-red-400'
-            }`}
-          />
-          <span className="flex-1 text-left truncate">
-            {hasKey
-              ? '실제 AI 연결됨'
-              : 'Gemini 키 미설정'}
-          </span>
-          <span className="text-slate-500">⚙</span>
-        </button>
-        {hasKey && (
-          <p className="px-3 pt-1 text-[10px] text-slate-600 truncate">{modelLabel}</p>
-        )}
-      </div>
-
-      {/* 하단 버전 */}
-      <div className="px-6 py-4 border-t border-white/10">
-        <p className="text-[11px] text-white/30">PersonaFlow v0.2</p>
-      </div>
-    </aside>
-  )
-}
-
 async function prepareFrameForHistory(frame: Frame): Promise<Frame> {
   const frameMeta = {
     originalName: frame.originalName,
@@ -266,6 +59,7 @@ async function prepareFrameForHistory(frame: Frame): Promise<Frame> {
     figmaNodeId: frame.figmaNodeId,
     figmaVersionId: frame.figmaVersionId,
     figmaUrl: frame.figmaUrl,
+    designContext: frame.designContext,
   }
 
   if (frame.imageUrl.startsWith('data:')) {
@@ -317,7 +111,7 @@ function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(
     () => window.localStorage.getItem('personaflow:onboarding-complete') !== 'true'
   )
-  const [step, setStep] = useState<TestStep>('upload')
+  const [step, setStep] = useState<AppStep>('upload')
   const [testMode, setTestMode] = useState<TestMode>('single')
   const [sourceType, setSourceType] = useState<SourceType>('figma')
   const [figmaUrl, setFigmaUrl] = useState('')
@@ -326,6 +120,9 @@ function App() {
   const [frames, setFrames] = useState<Frame[]>([])
   const [variants, setVariants] = useState<DesignVariant[]>(() => createDefaultVariants())
   const [abConfig, setAbConfig] = useState<ABTestConfig>(() => createDefaultABConfig())
+  const [flowConfig, setFlowConfig] = useState<FlowTestConfig>(() =>
+    createDefaultFlowConfig([])
+  )
   const [personas, setPersonas] = useState<PersonaConfig[]>([])
   const [report, setReport] = useState<TestReport | null>(null)
   const [history, setHistory] = useState<TestReport[]>(() => getTestHistory())
@@ -343,12 +140,22 @@ function App() {
     setFrames([])
     setVariants(createDefaultVariants())
     setAbConfig(createDefaultABConfig())
+    setFlowConfig(createDefaultFlowConfig([]))
     setPersonas([])
     setReport(null)
   }
 
-  const handleUploadNext = () => setStep('persona')
-  const handlePersonaBack = () => setStep('upload')
+  const handleUploadNext = () => {
+    if (testMode === 'ab') {
+      setStep('persona')
+      return
+    }
+    setFlowConfig((current) => syncFlowConfig(current, frames))
+    setStep('flow')
+  }
+  const handleFlowBack = () => setStep('upload')
+  const handleFlowNext = () => setStep('persona')
+  const handlePersonaBack = () => setStep(testMode === 'ab' ? 'upload' : 'flow')
   const handlePersonaNext = () => setStep('running')
 
   const handleAnalysisComplete = (r: TestReport) => {
@@ -377,6 +184,11 @@ function App() {
     setFrames(savedReport.frames)
     setVariants(savedReport.variants ?? createDefaultVariants())
     setAbConfig(savedReport.abConfig ?? createDefaultABConfig())
+    setFlowConfig(
+      savedReport.flowConfig ??
+        savedReport.flowResult?.config ??
+        createDefaultFlowConfig(savedReport.frames)
+    )
     setPersonas(savedReport.personas)
     setReport(savedReport)
     setStep('report')
@@ -412,7 +224,7 @@ function App() {
     setKeyModalOpen(true)
   }
 
-  const completeOnboarding = () => {
+  const rememberOnboardingSeen = () => {
     window.localStorage.setItem('personaflow:onboarding-complete', 'true')
     setOnboardingOpen(false)
   }
@@ -422,8 +234,8 @@ function App() {
 
   return (
     <div className="min-h-screen flex">
-      <Sidebar
-        step={step}
+      <SNB
+        currentStep={step}
         onReset={resetAll}
         hasKey={hasKey}
         model={model}
@@ -481,6 +293,15 @@ function App() {
               onRequireKey={() => setKeyModalOpen(true)}
             />
           )}
+          {step === 'flow' && (
+            <FlowSetupStep
+              frames={frames}
+              config={flowConfig}
+              onConfigChange={setFlowConfig}
+              onBack={handleFlowBack}
+              onNext={handleFlowNext}
+            />
+          )}
           {step === 'running' && (
             <RunningStep
               personas={personas}
@@ -488,6 +309,7 @@ function App() {
               testMode={testMode}
               variants={variants}
               abConfig={abConfig}
+              flowConfig={flowConfig}
               sourceType={sourceType}
               figmaSource={figmaSource}
               aiMode={aiMode}
@@ -523,8 +345,8 @@ function App() {
       />
       <OnboardingModal
         open={onboardingOpen}
-        onClose={() => setOnboardingOpen(false)}
-        onComplete={completeOnboarding}
+        onClose={rememberOnboardingSeen}
+        onComplete={rememberOnboardingSeen}
       />
     </div>
   )

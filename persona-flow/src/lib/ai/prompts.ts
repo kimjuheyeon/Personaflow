@@ -88,6 +88,9 @@ ${personaText}
 ## 수행할 작업
 1. **walkthrough**: 각 페르소나가 화면을 사용하는 과정을 단계별로 시뮬레이션하세요.
    각 단계는 "이 화면에서 무엇을 클릭/시도하는지(action)", "그때 드는 생각(thought)", "감정(emotion)"을 포함합니다.
+   - observedElement: 화면에서 실제로 확인한 조작 요소의 문구 또는 시각적 특징
+   - evidence: 그 행동을 선택한 직접적인 화면 근거
+   - confidence: 해당 요소 판독 확신도(0~100)
    - emotion: "positive" | "neutral" | "confused" | "frustrated"
    - frameId 는 위 화면 ID 중 하나를 정확히 사용하세요.
    - 페르소나 1명당 2~4단계, 실제 사용 흐름처럼 자연스럽게 작성하세요.
@@ -100,12 +103,17 @@ ${AXES_TEXT}
    - axis: 관련 축 번호(1~6), axisLabel: 해당 축 이름
    - heuristic: 관련 휴리스틱 (예: "닐슨 #1 시스템 상태 가시성")
    - problem: 구체적 문제 설명
-   - taskMetric: 그로 인한 정량적 영향 추정 (예: "완료율 34%, 클릭 +3회")
+   - taskMetric: 실제 로그로 오해할 정밀 수치를 만들지 말고, "완료 가능성 낮음", "탐색 단계 증가 가능"처럼 행동 영향 가설을 작성하세요.
    - suggestion: 개선 제안
    - frameId: 관련 화면 ID
+   - evidence: 실제 화면에서 확인한 문구·요소·배치 근거
+   - confidence: 해당 발견의 시각적 근거 확신도(0~100)
+   - 화면에서 확인하지 못한 문구나 요소를 만들어내지 마세요.
 
-4. **taskMetrics**: 전체 추정 지표
+4. **taskMetrics**: 실제 사용자 측정값이 아닌 AI 시뮬레이션 지표
    - completionRate(0~100), avgClicks(소수 가능), errorRate(0~100), dropoffPoint(주요 이탈 지점 문구)
+   - completionRate와 errorRate는 거짓 정밀도를 피하도록 5점 단위로만 작성하세요.
+   - 화면 근거가 약하면 보수적으로 평가하고 실제 행동 로그라고 표현하지 마세요.
 
 5. **overallSummary**: 3~5문장의 종합 총평 (점수 근거 + 우선 개선 항목).
 
@@ -165,7 +173,7 @@ ${personaText}
 ## 수행할 작업
 1. **walkthrough**: 각 페르소나가 A안과 B안을 사용해보는 과정을 단계별로 시뮬레이션하세요.
    - frameId는 반드시 위 화면 ID 중 하나를 사용하세요.
-   - action/thought/emotion을 포함하세요.
+   - action/thought/emotion과 함께 observedElement, evidence, confidence를 포함하세요.
    - emotion: "positive" | "neutral" | "confused" | "frustrated"
 
 2. **axisScores**: A/B 전체를 종합한 최종 추천 관점의 6축 점수를 0~100점으로 평가하세요. (반드시 아래 6개 축, 이 순서)
@@ -174,8 +182,9 @@ ${AXES_TEXT}
 3. **findings**: A안/B안/공통 문제를 합쳐 5~10개 도출하세요.
    - problem에는 "A안:", "B안:", "공통:" 중 어느 범위의 문제인지 명시하세요.
    - frameId는 관련 화면 ID를 넣으세요.
+   - evidence에는 실제 화면에서 확인한 문구나 요소를, confidence에는 확신도(0~100)를 넣으세요.
 
-4. **taskMetrics**: 추천안 기준의 전체 추정 지표를 작성하세요.
+4. **taskMetrics**: 추천안 기준의 AI 시뮬레이션 지표를 작성하세요. 실제 트래픽 측정값처럼 표현하지 말고 완료율과 오류율은 5점 단위로 작성하세요.
 
 5. **overallSummary**: A/B 테스트의 종합 총평을 3~5문장으로 작성하세요.
 

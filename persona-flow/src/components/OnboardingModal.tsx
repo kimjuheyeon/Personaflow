@@ -59,13 +59,18 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
     onComplete()
   }
 
+  const handleClose = () => {
+    setStep(0)
+    onClose()
+  }
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
       <button
         type="button"
         aria-label="온보딩 닫기"
         className="absolute inset-0 cursor-default bg-black/70 backdrop-blur-md"
-        onClick={onClose}
+        onClick={handleClose}
       />
 
       <section
@@ -77,7 +82,7 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
         <button
           type="button"
           aria-label="온보딩 닫기"
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute right-5 top-5 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/35 text-white/70 backdrop-blur-md transition hover:bg-black/55 hover:text-white"
         >
           <X className="h-4 w-4" />
@@ -136,7 +141,7 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
             <button
               type="button"
               onClick={handleComplete}
-              className="text-sm text-white/40 transition hover:text-white/70"
+              className="text-sm text-white/60 transition hover:text-white/80"
             >
               건너뛰기
             </button>
