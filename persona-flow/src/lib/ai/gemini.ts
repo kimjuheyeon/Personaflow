@@ -11,7 +11,6 @@ import type {
   AnalysisStage,
   AnalysisValidation,
   DesignVariant,
-  ObservedElement,
   PersonaConfig,
   ScreenObservation,
   AxisScore,
@@ -80,12 +79,13 @@ interface GenerateOptions {
 
 /** 한 번의 요청 시도. 재시도 판단에 필요한 정보를 담아 던진다. */
 class TransientGeminiError extends Error {
-  constructor(
-    message: string,
-    readonly retryAfterMs: number | null
-  ) {
+  // 생성자 파라미터 프로퍼티는 erasableSyntaxOnly에서 금지되므로 명시적으로 선언한다.
+  retryAfterMs: number | null
+
+  constructor(message: string, retryAfterMs: number | null) {
     super(message)
     this.name = 'TransientGeminiError'
+    this.retryAfterMs = retryAfterMs
   }
 }
 
