@@ -6,11 +6,17 @@
 import type {
   ABComparison,
   ABTestConfig,
+  AnalysisProgress,
+  AnalysisRunContext,
+  AnalysisStage,
   AnalysisValidation,
   DesignVariant,
+  ObservedElement,
   PersonaConfig,
+  ScreenObservation,
   AxisScore,
   Finding,
+  FlowJudgment,
   FlowOutcome,
   FlowRun,
   FlowTestConfig,
@@ -31,8 +37,22 @@ import {
   analysisPrompt,
   abAnalysisPrompt,
   chatSystemPrompt,
+  flowAnalystPrompt,
 } from './prompts'
 import { validateAnalysisEvidence, withMetricProvenance } from './validation'
+import { formatJudgment, judgeFlowRuns, matchFlowEdge } from './judge'
+import {
+  AnalysisAbortedError,
+  DEFAULT_MAX_ATTEMPTS,
+  PermanentAnalysisError,
+  backoffDelayMs,
+  delay,
+  isAbortError,
+  isRetriableStatus,
+  parseServerRetryDelayMs,
+  throwIfAborted,
+  type RetryNotice,
+} from './retry'
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 
@@ -52,9 +72,24 @@ interface GenerateOptions {
   contents: Content[]
   responseSchema?: unknown
   temperature?: number
+  signal?: AbortSignal
+  /** 재시도로 대기에 들어갈 때 호출된다. 진행 화면에 남은 시간을 보여주기 위한 것 */
+  onRetry?: (notice: RetryNotice) => void
+  maxAttempts?: number
 }
 
-async function generateContent(opts: GenerateOptions): Promise<string> {
+/** 한 번의 요청 시도. 재시도 판단에 필요한 정보를 담아 던진다. */
+class TransientGeminiError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number | null
+  ) {
+    super(message)
+    this.name = 'TransientGeminiError'
+  }
+}
+
+async function requestOnce(opts: GenerateOptions): Promise<string> {
   const url = `${API_BASE}/${opts.model}:generateContent?key=${encodeURIComponent(
     opts.apiKey
   )}`
@@ -85,37 +120,89 @@ async function generateContent(opts: GenerateOptions): Promise<string> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: opts.signal,
     })
-  } catch {
-    throw new Error('네트워크 오류로 Gemini에 연결할 수 없습니다.')
+  } catch (error) {
+    if (isAbortError(error)) throw new AnalysisAbortedError()
+    // 일시적 네트워크 오류일 수 있으므로 재시도 대상으로 던진다.
+    throw new TransientGeminiError('네트워크 오류로 Gemini에 연결할 수 없습니다.', null)
   }
 
   if (!res.ok) {
-    let msg = `Gemini 요청 실패 (HTTP ${res.status})`
+    let parsed: unknown = null
+    let detail = ''
     try {
-      const err = await res.json()
-      const detail = err?.error?.message
-      if (detail) msg = detail
+      parsed = await res.json()
+      detail = (parsed as { error?: { message?: string } })?.error?.message ?? ''
     } catch {
-      /* ignore */
+      /* 본문이 JSON이 아닐 수 있다 */
     }
-    if (res.status === 400) msg = `API 키가 올바르지 않거나 요청이 거부되었습니다. (${msg})`
-    if (res.status === 429) msg = `무료 사용 한도를 초과했습니다. 잠시 후 다시 시도하세요. (${msg})`
-    throw new Error(msg)
+
+    if (isRetriableStatus(res.status)) {
+      const serverDelay = parseServerRetryDelayMs(parsed, res.headers.get('retry-after'))
+      throw new TransientGeminiError(
+        res.status === 429
+          ? `무료 사용 한도에 걸렸습니다.${detail ? ` (${detail})` : ''}`
+          : `Gemini 서버가 일시적으로 응답하지 못했습니다. (HTTP ${res.status})`,
+        serverDelay
+      )
+    }
+
+    const base = detail || `Gemini 요청 실패 (HTTP ${res.status})`
+    throw new PermanentAnalysisError(
+      res.status === 400 || res.status === 401 || res.status === 403
+        ? `API 키가 올바르지 않거나 요청이 거부되었습니다. (${base})`
+        : base
+    )
   }
 
   const data = await res.json()
   const blockReason = data?.promptFeedback?.blockReason
   if (blockReason) {
-    throw new Error(`요청이 안전 필터에 의해 차단되었습니다. (${blockReason})`)
+    throw new PermanentAnalysisError(
+      `요청이 안전 필터에 의해 차단되었습니다. (${blockReason})`
+    )
   }
   const parts = data?.candidates?.[0]?.content?.parts ?? []
   const text = parts
     .map((p: { text?: string }) => p.text ?? '')
     .join('')
     .trim()
-  if (!text) throw new Error('Gemini가 빈 응답을 반환했습니다. 다시 시도해주세요.')
+  // 빈 응답은 재시도로 풀리는 경우가 많다.
+  if (!text) throw new TransientGeminiError('Gemini가 빈 응답을 반환했습니다.', null)
   return text
+}
+
+async function generateContent(opts: GenerateOptions): Promise<string> {
+  const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
+  let lastMessage = 'Gemini 요청에 실패했습니다.'
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    throwIfAborted(opts.signal)
+    try {
+      return await requestOnce(opts)
+    } catch (error) {
+      if (isAbortError(error)) throw new AnalysisAbortedError()
+      if (error instanceof PermanentAnalysisError) throw error
+      if (!(error instanceof TransientGeminiError)) throw error
+
+      lastMessage = error.message
+      if (attempt === maxAttempts) break
+
+      const waitMs = error.retryAfterMs ?? backoffDelayMs(attempt)
+      opts.onRetry?.({
+        attempt,
+        maxAttempts,
+        waitMs,
+        reason: error.message,
+      })
+      await delay(waitMs, opts.signal)
+    }
+  }
+
+  throw new Error(
+    `${lastMessage} ${maxAttempts}회 시도했지만 실패했습니다. 잠시 후 다시 시도하거나 더 가벼운 모델로 바꿔보세요.`
+  )
 }
 
 function parseJson<T>(text: string): T {
@@ -264,21 +351,6 @@ async function buildVariantParts(
   return parts
 }
 
-interface ObservedElement {
-  label: string
-  role: string
-  location: string
-  confidence: number
-}
-
-interface ScreenObservation {
-  frameId: string
-  summary: string
-  visibleTexts: string[]
-  interactiveElements: ObservedElement[]
-  unreadableAreas: string[]
-}
-
 const screenObservationSchema = {
   type: 'OBJECT',
   properties: {
@@ -376,16 +448,43 @@ function normalizeObservation(
   }
 }
 
+/** 단계별 진행 보고를 위한 헬퍼. onProgress가 없으면 아무 일도 하지 않는다. */
+function reportProgress(
+  context: AnalysisRunContext | undefined,
+  stage: AnalysisStage,
+  completed: number,
+  total: number,
+  retry?: AnalysisProgress['retry']
+): void {
+  context?.onProgress?.({ stage, completed, total, retry })
+}
+
+/** 해당 단계의 재시도 알림을 진행 보고로 전달하는 콜백을 만든다. */
+function retryReporter(
+  context: AnalysisRunContext | undefined,
+  stage: AnalysisStage,
+  completed: number,
+  total: number
+): (notice: RetryNotice) => void {
+  return (notice) => reportProgress(context, stage, completed, total, notice)
+}
+
 async function observeScreens(
   apiKey: string,
   model: string,
   frames: FrameInput[],
-  options: Pick<FramePartOptions, 'hideNames' | 'hideOrder'> = {}
+  options: Pick<FramePartOptions, 'hideNames' | 'hideOrder'> = {},
+  context?: AnalysisRunContext
 ): Promise<ScreenObservation[]> {
   const observations: ScreenObservation[] = []
   const batchSize = 4
+  const batchCount = Math.max(1, Math.ceil(frames.length / batchSize))
+
+  reportProgress(context, 'observe', 0, batchCount)
 
   for (let start = 0; start < frames.length; start += batchSize) {
+    throwIfAborted(context?.signal)
+    const batchIndex = Math.floor(start / batchSize)
     const batch = frames.slice(start, start + batchSize)
     const imageParts = await buildFrameParts(batch, {
       ...options,
@@ -403,6 +502,8 @@ async function observeScreens(
       ],
       responseSchema: screenObservationSchema,
       temperature: 0.1,
+      signal: context?.signal,
+      onRetry: retryReporter(context, 'observe', batchIndex, batchCount),
     })
     const parsed = parseJson<{ screens: ScreenObservation[] }>(text)
     for (const frame of batch) {
@@ -413,6 +514,7 @@ async function observeScreens(
         )
       )
     }
+    reportProgress(context, 'observe', batchIndex + 1, batchCount)
   }
 
   return observations
@@ -536,6 +638,7 @@ export interface AnalysisResult {
   walkthrough: WalkStep[]
   abComparison?: ABComparison
   flowResult?: FlowTestResult
+  flowJudgment?: FlowJudgment
   validation?: AnalysisValidation
 }
 
@@ -797,9 +900,17 @@ export async function analyzeDesign(
   apiKey: string,
   model: string,
   frames: FrameInput[],
-  personas: PersonaConfig[]
+  personas: PersonaConfig[],
+  context?: AnalysisRunContext
 ): Promise<AnalysisResult> {
-  const observations = await observeScreens(apiKey, model, frames)
+  const checkpoint = context?.checkpoint
+  let observations = checkpoint?.observations
+  if (!observations) {
+    observations = await observeScreens(apiKey, model, frames, {}, context)
+    if (checkpoint) checkpoint.observations = observations
+  } else {
+    reportProgress(context, 'observe', 1, 1)
+  }
   const frameParts = await buildFrameParts(frames, { imageDetail: 'overview' })
   const groundedPrompt = `${analysisPrompt(personas, frames)}
 
@@ -809,6 +920,7 @@ export async function analyzeDesign(
 판독 결과와 전체 화면이 충돌하면 추측하지 말고 불확실성을 명시하세요.
 
 ${formatScreenObservations(observations)}`
+  reportProgress(context, 'analyze', 0, 1)
   const text = await generateContent({
     apiKey,
     model,
@@ -825,9 +937,12 @@ ${formatScreenObservations(observations)}`
     ],
     responseSchema: analysisSchema,
     temperature: 0.6,
+    signal: context?.signal,
+    onRetry: retryReporter(context, 'analyze', 0, 1),
   })
 
   const raw = parseJson<RawAnalysis>(text)
+  reportProgress(context, 'analyze', 1, 1)
 
   const axisScores = normalizeAxisScores(raw.axisScores)
 
@@ -882,14 +997,19 @@ interface RawFlowRun {
   summary: string
 }
 
-interface RawFlowAnalysis {
+/** 페르소나 테스터 산출물 — 행동 기록만 */
+interface RawFlowRunSet {
   runs: RawFlowRun[]
+}
+
+/** UX 분석기 산출물 — 판정 결과를 받아 만든 문제·점수·총평 */
+interface RawFlowAnalysis {
   axisScores: { axis: number; label: string; score: number }[]
   findings: Omit<Finding, 'id'>[]
   overallSummary: string
 }
 
-const flowAnalysisSchema = {
+const flowTesterSchema = {
   type: 'OBJECT',
   properties: {
     runs: {
@@ -951,14 +1071,27 @@ const flowAnalysisSchema = {
         required: ['personaName', 'outcome', 'steps', 'interview', 'summary'],
       },
     },
+  },
+  required: ['runs'],
+}
+
+const flowAnalystSchema = {
+  type: 'OBJECT',
+  properties: {
     axisScores: analysisSchema.properties.axisScores,
     findings: analysisSchema.properties.findings,
     overallSummary: { type: 'STRING' },
   },
-  required: ['runs', 'axisScores', 'findings', 'overallSummary'],
+  required: ['axisScores', 'findings', 'overallSummary'],
 }
 
-function flowAnalysisPrompt(
+/**
+ * 페르소나 테스터 프롬프트.
+ * 이 단계의 산출물은 "행동 기록"뿐이다. UX 평가·점수·문제 도출은
+ * 별도의 UX 분석기(flowAnalystPrompt)가 판정 결과를 받아 수행한다.
+ * 한 요청에 관찰·연기·평가를 섞지 않기 위한 분리다.
+ */
+function flowTesterPrompt(
   personas: PersonaConfig[],
   frames: Frame[],
   config: FlowTestConfig
@@ -1010,63 +1143,12 @@ ${personaText}
 
 ## 결과
 - runs: 페르소나별로 스스로 선택한 행동, 예상 화면, Think Aloud, 단계별 예상 시간, 마찰, 사후 인터뷰를 작성
-- axisScores: 기존 6축 UX 평가를 0~100으로 작성
-- findings: 과업 성공을 방해한 핵심 문제 3~6개. 각 항목에 실제 화면 근거 evidence와 확신도 confidence를 포함
-- overallSummary: 성공/실패 원인과 최우선 개선점을 3~5문장으로 요약
+
+당신의 역할은 "행동하는 사용자"까지입니다.
+UX 점수 매기기, 문제 목록 작성, 총평은 당신의 일이 아닙니다. 행동과 그때의 생각만 기록하세요.
+스스로 잘했는지 평가하지도 마세요.
 
 모든 텍스트는 한국어로 작성하고 지정된 JSON 스키마만 반환하세요.`
-}
-
-function comparableAction(value: string): string {
-  return value
-    .normalize('NFKC')
-    .toLocaleLowerCase('ko-KR')
-    .replace(
-      /(버튼|링크|아이콘|메뉴|클릭|선택|누르기|누른다|탭하기|탭한다|이동하기|이동한다|시도한다|시도하기)/g,
-      ''
-    )
-    .replace(/[^\p{L}\p{N}]/gu, '')
-}
-
-function bigrams(value: string): string[] {
-  if (value.length < 2) return value ? [value] : []
-  return Array.from({ length: value.length - 1 }, (_, index) => value.slice(index, index + 2))
-}
-
-function actionSimilarity(left: string, right: string): number {
-  const a = comparableAction(left)
-  const b = comparableAction(right)
-  if (!a || !b) return 0
-  if (a === b) return 1
-  if (a.includes(b) || b.includes(a)) return 0.9
-
-  const aPairs = bigrams(a)
-  const bPairs = [...bigrams(b)]
-  let intersection = 0
-  for (const pair of aPairs) {
-    const index = bPairs.indexOf(pair)
-    if (index < 0) continue
-    intersection += 1
-    bPairs.splice(index, 1)
-  }
-  return (2 * intersection) / Math.max(1, aPairs.length + bigrams(b).length)
-}
-
-function matchFlowEdge(
-  outgoing: FlowTestConfig['edges'],
-  step: RawFlowStep
-): FlowTestConfig['edges'][number] | undefined {
-  const direct = outgoing.find((edge) => edge.toFrameId === step.targetFrameId)
-  if (direct) return direct
-
-  const evidence = [step.observedElement, step.action, step.evidence].filter(Boolean)
-  const ranked = outgoing
-    .map((edge) => ({
-      edge,
-      score: Math.max(...evidence.map((value) => actionSimilarity(value, edge.actionLabel)), 0),
-    }))
-    .sort((a, b) => b.score - a.score)
-  return ranked[0]?.score >= 0.45 ? ranked[0].edge : undefined
 }
 
 function normalizeFlowRuns(
@@ -1105,6 +1187,7 @@ function normalizeFlowRuns(
           ),
           expectedAction,
           transitionMatched: false,
+          aiExpectedFrameId: step.targetFrameId?.trim() || undefined,
           observedElement: step.observedElement?.trim() || undefined,
           evidence: step.evidence?.trim() || undefined,
           confidence: clampConfidence(step.confidence),
@@ -1133,6 +1216,7 @@ function normalizeFlowRuns(
         ),
         expectedAction: edge.actionLabel,
         transitionMatched: true,
+        aiExpectedFrameId: step.targetFrameId?.trim() || undefined,
         observedElement: step.observedElement?.trim() || undefined,
         evidence: step.evidence?.trim() || undefined,
         confidence: clampConfidence(step.confidence),
@@ -1173,24 +1257,73 @@ function normalizeFlowRuns(
   })
 }
 
+/** UX 분석기에 넘길 행동 기록 요약. 이미지는 넘기지 않는다. */
+function formatRunsForAnalyst(runs: FlowRun[], frames: Frame[]): string {
+  if (runs.length === 0) return '기록된 행동이 없습니다.'
+
+  return runs
+    .map((run) => {
+      const steps = run.events
+        .map((event) => {
+          const lines = [
+            `  ${event.step}. [${getFlowFrameLabel(frames, event.fromFrameId)}] ${event.action}`,
+            event.observedElement ? `     선택한 요소: "${event.observedElement}"` : '',
+            event.thought ? `     생각: ${event.thought}` : '',
+            `     감정: ${event.emotion}`,
+            event.friction ? `     마찰: ${event.friction}` : '',
+          ]
+          return lines.filter(Boolean).join('\n')
+        })
+        .join('\n')
+      const interview = (run.interview ?? [])
+        .map((item) => `     Q. ${item.question}\n     A. ${item.answer}`)
+        .join('\n')
+      return `### ${run.personaName} — 결과: ${run.outcome}
+${steps || '  (행동 없음)'}${interview ? `\n  사후 인터뷰:\n${interview}` : ''}`
+    })
+    .join('\n\n')
+}
+
 export async function analyzeFlowDesign(
   apiKey: string,
   model: string,
   frames: Frame[],
   personas: PersonaConfig[],
-  config: FlowTestConfig
+  config: FlowTestConfig,
+  context?: AnalysisRunContext
 ): Promise<AnalysisResult> {
+  const checkpoint = context?.checkpoint
   const blindFrames = [...frames].sort((a, b) => a.id.localeCompare(b.id))
-  const observations = await observeScreens(apiKey, model, blindFrames, {
-    hideNames: true,
-    hideOrder: true,
-  })
+
+  /* ── 1단계: 관찰기 ────────────────────────────────────────
+   * 이미 판독을 마쳤다면(재시도) 다시 호출하지 않는다.
+   */
+  let observations = checkpoint?.observations
+  if (!observations) {
+    observations = await observeScreens(
+      apiKey,
+      model,
+      blindFrames,
+      { hideNames: true, hideOrder: true },
+      context
+    )
+    if (checkpoint) checkpoint.observations = observations
+  } else {
+    reportProgress(context, 'observe', 1, 1)
+  }
+
   const frameParts = await buildFrameParts(blindFrames, {
     hideNames: true,
     hideOrder: true,
     imageDetail: 'overview',
   })
-  const groundedPrompt = `${flowAnalysisPrompt(personas, blindFrames, config)}
+  /* ── 2단계: 페르소나 테스터 (블라인드 행동) ────────────────
+   * 설계 의도·연결·성공 화면을 주지 않는다. 산출물은 행동 기록뿐이다.
+   */
+  let runs = checkpoint?.flowRuns
+  if (!runs) {
+    reportProgress(context, 'test', 0, 1)
+    const testerPrompt = `${flowTesterPrompt(personas, blindFrames, config)}
 
 ## 사전 화면 판독 결과
 아래에는 고해상도 상세 구간에서 실제로 확인한 문구와 조작 요소만 정리되어 있습니다.
@@ -1198,20 +1331,70 @@ export async function analyzeFlowDesign(
 확인되지 않은 버튼이나 링크를 만들어내지 마세요.
 
 ${formatScreenObservations(observations)}`
-  const text = await generateContent({
+    const testerText = await generateContent({
+      apiKey,
+      model,
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: testerPrompt }, ...frameParts],
+        },
+      ],
+      responseSchema: flowTesterSchema,
+      temperature: 0.65,
+      signal: context?.signal,
+      onRetry: retryReporter(context, 'test', 0, 1),
+    })
+    const rawRuns = parseJson<RawFlowRunSet>(testerText)
+    runs = normalizeFlowRuns(rawRuns.runs ?? [], personas, config)
+    if (checkpoint) checkpoint.flowRuns = runs
+  }
+  reportProgress(context, 'test', 1, 1)
+
+  /* ── 3단계: 판정기 (코드) ──────────────────────────────────
+   * LLM을 쓰지 않는다. 같은 입력이면 항상 같은 판정이 나와야
+   * 모델 교체·실제 사용자 테스트와의 비교가 성립한다.
+   * 네트워크를 타지 않으므로 실패하지 않고, 체크포인트도 필요 없다.
+   */
+  reportProgress(context, 'judge', 0, 1)
+  const judgment = judgeFlowRuns(runs, config, frames)
+  reportProgress(context, 'judge', 1, 1)
+
+  /* ── 4단계: UX 분석기 ─────────────────────────────────────
+   * 화면을 다시 해석하지 않는다. 관찰 사실과 확정된 판정만 근거로 쓴다.
+   * 이미지를 넘기지 않아 앞 단계보다 가볍다.
+   */
+  reportProgress(context, 'analyze', 0, 1)
+  const analystText = await generateContent({
     apiKey,
     model,
     contents: [
       {
         role: 'user',
-        parts: [{ text: groundedPrompt }, ...frameParts],
+        parts: [
+          {
+            text: `${flowAnalystPrompt(config)}
+
+## 1. 화면 판독 결과
+${formatScreenObservations(observations)}
+
+## 2. 행동 기록
+${formatRunsForAnalyst(runs, frames)}
+
+## 3. 설계 의도 대조 판정
+${formatJudgment(judgment, frames)}`,
+          },
+        ],
       },
     ],
-    responseSchema: flowAnalysisSchema,
-    temperature: 0.65,
+    responseSchema: flowAnalystSchema,
+    temperature: 0.4,
+    signal: context?.signal,
+    onRetry: retryReporter(context, 'analyze', 0, 1),
   })
-  const raw = parseJson<RawFlowAnalysis>(text)
-  const runs = normalizeFlowRuns(raw.runs ?? [], personas, config)
+  const raw = parseJson<RawFlowAnalysis>(analystText)
+  reportProgress(context, 'analyze', 1, 1)
+
   const flowResult = createFlowTestResult(config, runs, raw.overallSummary ?? '')
   const findings: Finding[] = (raw.findings ?? []).map((finding, index) => ({
     id: `flow-f-${index + 1}`,
@@ -1290,6 +1473,7 @@ ${formatScreenObservations(observations)}`
     overallSummary: raw.overallSummary ?? '',
     walkthrough: validated.walkthrough,
     flowResult: validatedFlowResult,
+    flowJudgment: judgment,
     validation: validated.validation,
   }
 }
@@ -1299,8 +1483,10 @@ export async function analyzeABDesign(
   model: string,
   variants: DesignVariant[],
   personas: PersonaConfig[],
-  abConfig: ABTestConfig
+  abConfig: ABTestConfig,
+  context?: AnalysisRunContext
 ): Promise<AnalysisResult> {
+  const checkpoint = context?.checkpoint
   const observationFrames = variants.flatMap((variant) =>
     variant.frames.map((frame) => ({
       ...frame,
@@ -1308,7 +1494,13 @@ export async function analyzeABDesign(
       userLabel: `${variant.name} · ${getFrameDisplayName(frame)}`,
     }))
   )
-  const observations = await observeScreens(apiKey, model, observationFrames)
+  let observations = checkpoint?.observations
+  if (!observations) {
+    observations = await observeScreens(apiKey, model, observationFrames, {}, context)
+    if (checkpoint) checkpoint.observations = observations
+  } else {
+    reportProgress(context, 'observe', 1, 1)
+  }
   const variantParts = await buildVariantParts(variants, { imageDetail: 'overview' })
   const groundedPrompt = `${abAnalysisPrompt(personas, variants, abConfig)}
 
@@ -1333,9 +1525,12 @@ ${formatScreenObservations(observations)}`
     ],
     responseSchema: abAnalysisSchema,
     temperature: 0.6,
+    signal: context?.signal,
+    onRetry: retryReporter(context, 'analyze', 0, 1),
   })
 
   const raw = parseJson<RawAnalysis>(text)
+  reportProgress(context, 'analyze', 1, 1)
   const findings: Finding[] = (raw.findings ?? []).map((finding, index) => ({
     id: `f-${index + 1}`,
     ...finding,

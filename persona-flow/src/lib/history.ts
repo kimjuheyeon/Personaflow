@@ -3,6 +3,7 @@ import type {
   DesignVariant,
   FeedbackThread,
   FigmaSource,
+  FlowJudgment,
   Frame,
   FrameChat,
   TestReport,
@@ -77,10 +78,28 @@ function normalizeFeedbackThread(thread: FeedbackThread): FeedbackThread {
   }
 }
 
+function normalizeFlowJudgment(
+  judgment: FlowJudgment | undefined
+): FlowJudgment | undefined {
+  if (!judgment) return undefined
+  return {
+    ...judgment,
+    steps: judgment.steps ?? [],
+    clarifications: (judgment.clarifications ?? []).map((request) => ({
+      ...request,
+      affectedPersonas: request.affectedPersonas ?? [],
+      answer: request.answer
+        ? { ...request.answer, answeredAt: toDate(request.answer.answeredAt) }
+        : undefined,
+    })),
+  }
+}
+
 function normalizeReport(report: TestReport): TestReport {
   return {
     ...report,
     createdAt: toDate(report.createdAt),
+    flowJudgment: normalizeFlowJudgment(report.flowJudgment),
     figmaSource: normalizeFigmaSource(report.figmaSource),
     frames: (report.frames ?? []).map(normalizeFrame),
     variants: report.variants?.map(normalizeVariant),

@@ -26,6 +26,8 @@ import { chatWithPersona } from '@/lib/ai/gemini'
 import { getFrameDisplayName } from '@/lib/frameNaming'
 import type {
   TestReport,
+  ClarificationRequest,
+  DesignerAnswer,
   Finding,
   SeverityLevel,
   WalkEmotion,
@@ -42,6 +44,7 @@ interface ReportPageProps {
   model: string
   onRequireKey: () => void
   onFeedbackThreadsChange: (threads: FeedbackThread[]) => void
+  onClarificationsChange: (clarifications: ClarificationRequest[]) => void
 }
 
 /* ── 유틸 ── */
@@ -1407,8 +1410,276 @@ function FlowUTTab({ report }: { report: TestReport }) {
   )
 }
 
+/* ── 설계 의도 확인 (되묻기) ──────────────────────────────────
+ * 주석을 미리 다 받지 않는다. 판정기가 "AI가 막힌 곳"을 짚어낸 지점에만
+ * 디자이너에게 의도를 되묻고, 그 답을 다음 판정의 근거로 쓴다.
+ */
+
+const REASON_LABEL: Record<ClarificationRequest['reason'], string> = {
+  blocked: '막힘',
+  misread: '의미 오해',
+}
+
+const REASON_CLASS: Record<ClarificationRequest['reason'], string> = {
+  blocked: 'bg-red-100 text-red-700',
+  misread: 'bg-amber-100 text-amber-700',
+}
+
+const answerFieldClass =
+  'w-full rounded-[10px] border border-white/10 bg-[#272729] px-3 py-2 text-sm text-gray-900'
+
+function ClarificationCard({
+  request,
+  frameName,
+  onAnswer,
+}: {
+  request: ClarificationRequest
+  frameName: string
+  onAnswer: (id: string, answer: DesignerAnswer) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [elementName, setElementName] = useState(
+    request.answer?.elementName ?? request.observedElement ?? ''
+  )
+  const [elementRole, setElementRole] = useState(request.answer?.elementRole ?? '')
+  const [intendedAction, setIntendedAction] = useState(request.answer?.intendedAction ?? '')
+  const [visibilityCondition, setVisibilityCondition] = useState(
+    request.answer?.visibilityCondition ?? ''
+  )
+  const [notes, setNotes] = useState(request.answer?.notes ?? '')
+
+  const answered = Boolean(request.answer)
+  const canSave = elementName.trim().length > 0 && intendedAction.trim().length > 0
+
+  const save = () => {
+    if (!canSave) return
+    onAnswer(request.id, {
+      elementName: elementName.trim(),
+      elementRole: elementRole.trim() || '미지정',
+      intendedAction: intendedAction.trim(),
+      visibilityCondition: visibilityCondition.trim() || undefined,
+      notes: notes.trim() || undefined,
+      answeredAt: new Date(),
+    })
+    setOpen(false)
+  }
+
+  return (
+    <div className="rounded-[18px] border border-white/10 bg-[#1c1c1e] p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${REASON_CLASS[request.reason]}`}
+        >
+          {REASON_LABEL[request.reason]}
+        </span>
+        <span className="text-xs text-gray-500">{frameName}</span>
+        <span className="text-xs text-gray-400">
+          · 페르소나 {request.affectedPersonas.length}명 ({request.affectedPersonas.join(', ')})
+        </span>
+        {answered && (
+          <span className="ml-auto flex items-center gap-1 text-xs font-medium text-green-700">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            답변 완료
+          </span>
+        )}
+      </div>
+
+      <p className="mt-3 text-sm leading-relaxed text-gray-900">{request.question}</p>
+
+      {request.aiInterpretation && (
+        <p className="mt-2 text-xs text-gray-500">AI가 이해한 내용: {request.aiInterpretation}</p>
+      )}
+
+      {answered && !open && (
+        <div className="mt-3 space-y-1 rounded-[14px] bg-[#272729] p-4 text-xs text-gray-700">
+          <p>
+            <span className="text-gray-400">요소 </span>
+            {request.answer?.elementName} · {request.answer?.elementRole}
+          </p>
+          <p>
+            <span className="text-gray-400">의도한 행동 </span>
+            {request.answer?.intendedAction}
+          </p>
+          {request.answer?.visibilityCondition && (
+            <p>
+              <span className="text-gray-400">표시 조건 </span>
+              {request.answer.visibilityCondition}
+            </p>
+          )}
+          {request.answer?.notes && (
+            <p>
+              <span className="text-gray-400">참고 </span>
+              {request.answer.notes}
+            </p>
+          )}
+        </div>
+      )}
+
+      {open ? (
+        <div className="mt-4 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block space-y-1">
+              <span className="text-xs text-gray-500">요소 이름 *</span>
+              <input
+                value={elementName}
+                onChange={(event) => setElementName(event.target.value)}
+                placeholder="예: 새 에이전트 생성 버튼"
+                className={answerFieldClass}
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs text-gray-500">요소 역할</span>
+              <input
+                value={elementRole}
+                onChange={(event) => setElementRole(event.target.value)}
+                placeholder="예: 주요 CTA"
+                className={answerFieldClass}
+              />
+            </label>
+          </div>
+          <label className="block space-y-1">
+            <span className="text-xs text-gray-500">의도한 사용자 행동 *</span>
+            <input
+              value={intendedAction}
+              onChange={(event) => setIntendedAction(event.target.value)}
+              placeholder="예: 에이전트 생성 절차를 시작한다"
+              className={answerFieldClass}
+            />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block space-y-1">
+              <span className="text-xs text-gray-500">표시·활성 조건</span>
+              <input
+                value={visibilityCondition}
+                onChange={(event) => setVisibilityCondition(event.target.value)}
+                placeholder="예: 로그인 완료 시에만 노출"
+                className={answerFieldClass}
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs text-gray-500">참고사항</span>
+              <input
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                placeholder="예: 프로토타입에서는 저장이 동작하지 않음"
+                className={answerFieldClass}
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={save} disabled={!canSave}>
+              의도 저장
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+              취소
+            </Button>
+            {!canSave && (
+              <span className="text-xs text-gray-400">요소 이름과 의도한 행동은 필수입니다</span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => setOpen(true)}>
+          {answered ? '답변 수정' : '설계 의도 알려주기'}
+        </Button>
+      )}
+    </div>
+  )
+}
+
+function ClarificationTab({
+  report,
+  onClarificationsChange,
+}: {
+  report: TestReport
+  onClarificationsChange: (clarifications: ClarificationRequest[]) => void
+}) {
+  const judgment = report.flowJudgment
+
+  if (!judgment) {
+    return (
+      <p className="text-sm text-gray-500">
+        이 리포트에는 판정 결과가 없습니다. Flow UT 모드로 테스트하면 설계 의도 대조가 실행됩니다.
+      </p>
+    )
+  }
+
+  const clarifications = judgment.clarifications
+  const answeredCount = clarifications.filter((item) => item.answer).length
+
+  const handleAnswer = (id: string, answer: DesignerAnswer) => {
+    onClarificationsChange(
+      clarifications.map((item) => (item.id === id ? { ...item, answer } : item))
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-[18px] border border-white/10 bg-[#1c1c1e] p-6">
+        <h3 className="text-[17px] font-semibold text-gray-900">AI가 이해하지 못한 지점</h3>
+        <p className="mt-2 max-w-[62ch] text-sm leading-relaxed text-gray-500">
+          AI 페르소나는 설계 의도를 보지 않고 행동했습니다. 아래는 판정기가 실제 행동과 정의된 흐름을
+          대조해 찾아낸, AI가 스스로 해석하지 못한 지점입니다. 여기에만 의도를 알려주면 다음 테스트의
+          판정이 정확해집니다.
+        </p>
+        <div className="mt-5 flex flex-wrap gap-8">
+          <div>
+            <p className="text-xs text-gray-400">막힌 단계</p>
+            <p className="text-2xl font-bold text-red-600">{judgment.blockedStepCount}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">의미를 오해한 단계</p>
+            <p className="text-2xl font-bold text-amber-700">{judgment.misreadStepCount}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">첫 행동이 의도와 일치</p>
+            <p className="text-2xl font-bold text-blue-600">{judgment.intendedFirstActionRate}%</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">답변한 질문</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {answeredCount}/{clarifications.length}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {clarifications.length === 0 ? (
+        <div className="rounded-[18px] border border-white/10 bg-[#1c1c1e] p-6">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <p className="text-sm font-medium text-gray-900">되물을 것이 없습니다</p>
+          </div>
+          <p className="mt-2 text-sm text-gray-500">
+            모든 행동이 정의된 흐름 안에서 해석됐습니다. 화면만 보고도 다음 행동을 찾을 수 있었다는
+            뜻입니다.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {clarifications.map((request) => (
+            <ClarificationCard
+              key={request.id}
+              request={request}
+              frameName={frameNameFromReport(report, request.frameId)}
+              onAnswer={handleAnswer}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── 탭 타입 ── */
-type ReportTab = 'flow' | 'summary' | 'ab' | 'findings' | 'walkthrough' | 'chat'
+type ReportTab =
+  | 'flow'
+  | 'summary'
+  | 'ab'
+  | 'findings'
+  | 'walkthrough'
+  | 'clarify'
+  | 'chat'
 
 function downloadJson(report: TestReport) {
   const {
@@ -1422,6 +1693,7 @@ function downloadJson(report: TestReport) {
     abComparison,
     flowConfig,
     flowResult,
+    flowJudgment,
     axisScores,
     findings,
     taskMetrics,
@@ -1450,6 +1722,7 @@ function downloadJson(report: TestReport) {
     abComparison,
     flowConfig,
     flowResult,
+    flowJudgment,
     axisScores,
     findings,
     taskMetrics,
@@ -1475,6 +1748,7 @@ export default function ReportPage({
   model,
   onRequireKey,
   onFeedbackThreadsChange,
+  onClarificationsChange,
 }: ReportPageProps) {
   const [activeTab, setActiveTab] = useState<ReportTab>(
     report.flowResult ? 'flow' : 'summary'
@@ -1482,6 +1756,8 @@ export default function ReportPage({
 
   const findingsCount = report.findings.length
   const walkCount = report.walkthrough?.length ?? 0
+  const clarifications = report.flowJudgment?.clarifications ?? []
+  const openClarifications = clarifications.filter((item) => !item.answer).length
 
   const formattedDate = new Intl.DateTimeFormat('ko-KR', {
     year: 'numeric',
@@ -1497,6 +1773,17 @@ export default function ReportPage({
     ...(report.abComparison ? [{ key: 'ab' as const, label: 'A/B 비교' }] : []),
     { key: 'findings', label: `발견된 문제 (${findingsCount})` },
     { key: 'walkthrough', label: `클릭 시뮬레이션 (${walkCount})` },
+    ...(report.flowJudgment
+      ? [
+          {
+            key: 'clarify' as const,
+            label:
+              openClarifications > 0
+                ? `설계 의도 확인 (${openClarifications})`
+                : '설계 의도 확인',
+          },
+        ]
+      : []),
     { key: 'chat', label: '인라인 채팅' },
   ]
 
@@ -1562,6 +1849,12 @@ export default function ReportPage({
         {activeTab === 'ab' && <ABComparisonTab report={report} />}
         {activeTab === 'findings' && <FindingsTab report={report} />}
         {activeTab === 'walkthrough' && <WalkthroughTab report={report} />}
+        {activeTab === 'clarify' && (
+          <ClarificationTab
+            report={report}
+            onClarificationsChange={onClarificationsChange}
+          />
+        )}
         {activeTab === 'chat' && (
           <InlineChatTab
             report={report}

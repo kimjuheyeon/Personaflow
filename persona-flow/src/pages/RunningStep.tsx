@@ -4,10 +4,15 @@ import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { analyzeABDesignDemo, analyzeDesignDemo, analyzeFlowDesignDemo } from '@/lib/ai/demo'
 import { analyzeABDesign, analyzeDesign, analyzeFlowDesign } from '@/lib/ai/gemini'
+import { formatWait, isAbortError } from '@/lib/ai/retry'
 import { getFrameProjectLabel } from '@/lib/frameNaming'
 import type {
   ABTestConfig,
   AIMode,
+  AnalysisCheckpoint,
+  AnalysisProgress,
+  AnalysisRunContext,
+  AnalysisStage,
   DesignVariant,
   FigmaSource,
   FlowTestConfig,
@@ -35,19 +40,39 @@ interface RunningStepProps {
   onRequireKey: () => void
 }
 
-const STEPS = [
-  { label: '화면 이미지와 Figma 원문 대조 중', progress: 25 },
-  { label: '페르소나 시뮬레이션 실행 중', progress: 55 },
-  { label: '6축 UX 평가 생성 중', progress: 80 },
-  { label: '화면 근거 검증 및 리포트 작성 중', progress: 95 },
+/**
+ * 진행 단계 정의.
+ * weight는 전체 진행률에서 이 단계가 차지하는 비중이다.
+ * 실제 호출 완료 수로 계산하므로, 화면이 많으면 판독 단계가 길게 머문다 —
+ * 그게 사실이기 때문이다.
+ */
+interface StageSpec {
+  stage: AnalysisStage
+  label: string
+  weight: number
+}
+
+const STEPS: StageSpec[] = [
+  { stage: 'observe', label: '화면 판독 중', weight: 55 },
+  { stage: 'analyze', label: '6축 UX 평가 및 근거 검증 중', weight: 45 },
 ]
 
-const FLOW_STEPS = [
-  { label: '시나리오와 미션 전달 중', progress: 20 },
-  { label: 'Think Aloud 방식으로 Flow 수행 중', progress: 50 },
-  { label: '수행 시간과 성공 여부 집계 중', progress: 78 },
-  { label: '경로 근거 검증 및 리포트 작성 중', progress: 95 },
+const FLOW_STEPS: StageSpec[] = [
+  { stage: 'observe', label: '화면 판독 중 (관찰기)', weight: 42 },
+  { stage: 'test', label: '설계 의도를 가린 채 미션 수행 중 (페르소나 테스터)', weight: 33 },
+  { stage: 'judge', label: '실제 행동과 설계 의도 대조 중 (판정기)', weight: 3 },
+  { stage: 'analyze', label: '판정 결과로 UX 문제 도출 중 (분석기)', weight: 22 },
 ]
+
+/** 완료된 단계 비중 + 현재 단계의 부분 진행으로 전체 진행률을 만든다. */
+function computeProgress(specs: StageSpec[], progress: AnalysisProgress | null): number {
+  if (!progress) return 0
+  const index = specs.findIndex((spec) => spec.stage === progress.stage)
+  if (index < 0) return 0
+  const done = specs.slice(0, index).reduce((sum, spec) => sum + spec.weight, 0)
+  const ratio = progress.total > 0 ? Math.min(1, progress.completed / progress.total) : 0
+  return Math.min(99, Math.round(done + specs[index].weight * ratio))
+}
 
 const DEVICE_LABEL: Record<string, string> = {
   desktop: '데스크탑',
@@ -106,19 +131,23 @@ export default function RunningStep({
 }: RunningStepProps) {
   const isFlowTest = testMode === 'single' && flowConfig.mode === 'flow'
   const stageSteps = isFlowTest ? FLOW_STEPS : STEPS
-  const [currentStep, setCurrentStep] = useState(0)
   const [isDone, setIsDone] = useState(false)
-  const [progress, setProgress] = useState(0)
+  const [progressState, setProgressState] = useState<AnalysisProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const cancelledRef = useRef(false)
-  const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const stopStageAnimation = () => {
-    if (stageTimerRef.current) {
-      clearInterval(stageTimerRef.current)
-      stageTimerRef.current = null
-    }
-  }
+  /**
+   * 재시도해도 앞 단계를 다시 호출하지 않도록 체크포인트를 컴포넌트 수명 동안 유지한다.
+   * "다시 시도"는 같은 컴포넌트에서 run()을 다시 부르므로 ref가 그대로 살아 있다.
+   */
+  const checkpointRef = useRef<AnalysisCheckpoint>({})
+  const abortRef = useRef<AbortController | null>(null)
+
+  const progress = computeProgress(stageSteps, progressState)
+  const currentStep = progressState
+    ? Math.max(0, stageSteps.findIndex((spec) => spec.stage === progressState.stage))
+    : 0
+  const retryNotice = progressState?.retry ?? null
+  const resumedFromCheckpoint = Boolean(checkpointRef.current.observations)
 
   const run = useCallback(async () => {
     if (aiMode === 'gemini_free' && !apiKey) {
@@ -140,33 +169,35 @@ export default function RunningStep({
 
     setError(null)
     setIsDone(false)
-    setCurrentStep(0)
-    setProgress(stageSteps[0].progress)
+    setProgressState({ stage: stageSteps[0].stage, completed: 0, total: 0 })
 
-    // 응답 대기 동안 단계 애니메이션 (마지막 단계에서 대기)
-    stopStageAnimation()
-    let idx = 0
-    stageTimerRef.current = setInterval(() => {
-      idx = Math.min(idx + 1, stageSteps.length - 1)
-      setCurrentStep(idx)
-      setProgress(stageSteps[idx].progress)
-    }, 1800)
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    const context: AnalysisRunContext = {
+      signal: controller.signal,
+      checkpoint: checkpointRef.current,
+      onProgress: (next) => {
+        if (controller.signal.aborted) return
+        setProgressState(next)
+      },
+    }
 
     try {
       const result =
         testMode === 'ab'
           ? aiMode === 'demo'
             ? await analyzeABDesignDemo(variants, personas, abConfig)
-            : await analyzeABDesign(apiKey, model, variants, personas, abConfig)
+            : await analyzeABDesign(apiKey, model, variants, personas, abConfig, context)
           : isFlowTest
           ? aiMode === 'demo'
             ? await analyzeFlowDesignDemo(frames, personas, flowConfig)
-            : await analyzeFlowDesign(apiKey, model, frames, personas, flowConfig)
+            : await analyzeFlowDesign(apiKey, model, frames, personas, flowConfig, context)
           : aiMode === 'demo'
           ? await analyzeDesignDemo(frames, personas, sourceType, figmaSource)
-          : await analyzeDesign(apiKey, model, frames, personas)
-      if (cancelledRef.current) return
-      stopStageAnimation()
+          : await analyzeDesign(apiKey, model, frames, personas, context)
+      if (controller.signal.aborted) return
 
       const reportFrames = targetFrames
 
@@ -192,6 +223,7 @@ export default function RunningStep({
         abComparison: result.abComparison,
         flowConfig: testMode === 'single' ? flowConfig : undefined,
         flowResult: result.flowResult,
+        flowJudgment: result.flowJudgment,
         axisScores: result.axisScores,
         findings: result.findings,
         taskMetrics: result.taskMetrics,
@@ -202,14 +234,13 @@ export default function RunningStep({
         feedbackThreads: [],
       }
 
-      setProgress(100)
       setIsDone(true)
       setTimeout(() => {
-        if (!cancelledRef.current) onComplete(report)
+        if (!controller.signal.aborted) onComplete(report)
       }, 900)
     } catch (e) {
-      if (cancelledRef.current) return
-      stopStageAnimation()
+      // 사용자가 화면을 벗어나 중단한 경우는 오류가 아니다.
+      if (controller.signal.aborted || isAbortError(e)) return
       setError(e instanceof Error ? e.message : 'AI 분석에 실패했습니다.')
     }
   }, [
@@ -230,14 +261,13 @@ export default function RunningStep({
   ])
 
   useEffect(() => {
-    cancelledRef.current = false
     const startTimer = setTimeout(() => {
       void run()
     }, 0)
     return () => {
-      cancelledRef.current = true
       clearTimeout(startTimer)
-      stopStageAnimation()
+      // 화면을 벗어나면 실제로 요청을 끊는다. 남은 할당량을 낭비하지 않기 위해서다.
+      abortRef.current?.abort()
     }
   }, [run])
 
@@ -253,7 +283,13 @@ export default function RunningStep({
             <h2 className="text-[21px] font-semibold text-gray-900">분석에 실패했습니다</h2>
             <p className="mt-2 text-sm text-gray-500 leading-relaxed">{error}</p>
           </div>
-          <div className="flex items-center justify-center gap-2">
+          {resumedFromCheckpoint && (
+            <p className="mt-3 rounded-[14px] bg-[#272729] px-4 py-3 text-xs leading-relaxed text-gray-500">
+              이미 끝난 화면 판독 결과는 보관해 두었습니다. 다시 시도하면 그 단계는 건너뛰고
+              실패한 지점부터 이어서 진행합니다.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center justify-center gap-2">
             <Button variant="outline" size="sm" onClick={onBack}>
               페르소나로 돌아가기
             </Button>
@@ -261,7 +297,7 @@ export default function RunningStep({
               키 변경
             </Button>
             <Button size="sm" onClick={run}>
-              다시 시도
+              {resumedFromCheckpoint ? '이어서 다시 시도' : '다시 시도'}
             </Button>
           </div>
         </div>
@@ -297,14 +333,39 @@ export default function RunningStep({
           </div>
         </div>
 
-        {/* 진행률 */}
+        {/* 진행률 — 실제 호출 완료 수로 계산한다 */}
         <div className="space-y-1.5">
           <div className="flex justify-between items-center">
-            <span className="text-xs text-gray-500">전체 진행률</span>
-            <span className="text-xs font-semibold text-blue-600">{progress}%</span>
+            <span className="text-xs text-gray-500">
+              전체 진행률
+              {progressState && progressState.total > 1 && (
+                <span className="ml-1.5 text-gray-400">
+                  · 화면 {progressState.completed}/{progressState.total} 묶음 판독
+                </span>
+              )}
+            </span>
+            <span className="text-xs font-semibold text-blue-600">
+              {isDone ? 100 : progress}%
+            </span>
           </div>
-          <Progress value={progress} className="h-2" />
+          <Progress value={isDone ? 100 : progress} className="h-2" />
         </div>
+
+        {/* 재시도 대기 — 멈춘 것처럼 보이지 않도록 이유를 밝힌다 */}
+        {retryNotice && !isDone && (
+          <div className="flex items-start gap-2.5 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-700" />
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-amber-900">
+                {formatWait(retryNotice.waitMs)} 뒤 다시 시도합니다 ({retryNotice.attempt}/
+                {retryNotice.maxAttempts})
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-gray-500">
+                {retryNotice.reason} 여기까지의 결과는 보관되어 있어 처음부터 다시 하지 않습니다.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* 단계 리스트 */}
         <div className="overflow-hidden rounded-[18px] border border-white/10 bg-[#272729]">
@@ -345,6 +406,9 @@ export default function RunningStep({
                   {isCompleted && !isCurrent
                     ? step.label.replace('중', '') + ' 완료'
                     : step.label + (isCurrent ? '...' : '')}
+                  {isCurrent && retryNotice && (
+                    <span className="ml-1.5 text-amber-700">재시도 대기 중</span>
+                  )}
                 </span>
               </div>
             )

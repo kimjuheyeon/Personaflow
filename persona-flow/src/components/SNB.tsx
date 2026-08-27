@@ -10,6 +10,7 @@ import {
   Upload,
   Users,
   CircleHelp,
+  PlayCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { MODEL_OPTIONS } from '@/lib/ai/keyStore'
@@ -35,6 +36,7 @@ interface SNBProps {
   currentReportId?: string
   onOpenReport: (report: TestReport) => void
   onOpenGuide: () => void
+  onOpenDemo: () => void
 }
 
 const NAVIGATION_STEPS: NavigationStep[] = [
@@ -107,6 +109,7 @@ export default function SNB({
   currentReportId,
   onOpenReport,
   onOpenGuide,
+  onOpenDemo,
 }: SNBProps) {
   const modelLabel = MODEL_OPTIONS.find((option) => option.id === model)?.label ?? model
 
@@ -260,7 +263,16 @@ export default function SNB({
         </div>
       </nav>
 
-      <div className="px-4 pb-3">
+      <div className="space-y-1 px-4 pb-3">
+        {/* 키 없이 제품 전체를 볼 수 있는 경로. 처음 온 사람이 가장 먼저 누를 수 있어야 한다. */}
+        <button
+          type="button"
+          onClick={onOpenDemo}
+          className="flex h-9 w-full items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 text-left text-xs font-medium text-slate-300 transition-colors hover:border-white/15 hover:bg-white/[0.06] hover:text-white"
+        >
+          <PlayCircle className="h-3.5 w-3.5 flex-shrink-0" />
+          샘플 리포트 보기
+        </button>
         <button
           type="button"
           onClick={onOpenGuide}

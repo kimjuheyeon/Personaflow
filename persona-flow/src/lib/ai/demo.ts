@@ -1,20 +1,29 @@
 import { AXES } from './prompts'
+import { judgeFlowRuns } from './judge'
 import type { AnalysisResult } from './gemini'
 import type {
   ABTestConfig,
   ABComparison,
   DesignVariant,
   FigmaSource,
+  Finding,
   FlowRun,
   FlowTestConfig,
   Frame,
   PersonaConfig,
   SourceType,
   TaskMetrics,
+  TestReport,
   VariantId,
   WalkStep,
 } from '@/types'
 import { createFlowTestResult, getFlowFrameLabel } from '@/lib/flow'
+import {
+  createDemoFlowConfig,
+  createDemoFlowRuns,
+  createDemoFrames,
+  createDemoPersonas,
+} from '@/lib/demoScenario'
 
 const DEFAULT_PERSONAS: PersonaConfig[] = [
   {
@@ -265,6 +274,128 @@ function buildDemoFlowRuns(
   })
 }
 
+/**
+ * 완성된 샘플 리포트.
+ * 판정은 실제 분석과 똑같이 judgeFlowRuns()를 쓴다 — 데모용 가짜 판정을 만들지 않는다.
+ * 여기서 본 되묻기 질문은 실제 테스트에서 나오는 것과 같은 방식으로 생성된 것이다.
+ */
+export function createDemoReport(): TestReport {
+  const frames = createDemoFrames()
+  const personas = createDemoPersonas()
+  const config = createDemoFlowConfig()
+  const runs = createDemoFlowRuns(personas)
+  const judgment = judgeFlowRuns(runs, config, frames)
+  const flowResult = createFlowTestResult(
+    config,
+    runs,
+    '세 페르소나 중 한 명이 대시보드 빈 상태에서 생성 경로를 찾지 못해 미션을 완료하지 못했습니다. 완료한 두 명도 같은 아이콘에서 추측에 의존했고, 한 명은 "생성" 이후 도착 화면을 잘못 예상했습니다. 레이블 없는 아이콘과 결과가 예고되지 않는 버튼이 공통 원인입니다.'
+  )
+
+  const findings: Finding[] = [
+    {
+      id: 'demo-f1',
+      severity: 'critical',
+      axis: 2,
+      axisLabel: '온보딩 흐름',
+      heuristic: '닐슨 #6 기억보다 인식',
+      problem:
+        '대시보드 빈 상태에 생성 동작이 레이블 없는 "+" 아이콘 하나로만 제공됩니다. 초급 페르소나는 이 아이콘의 의미를 알아내지 못해 미션을 중단했고, 완료한 두 명도 관례에 의존해 추측했습니다.',
+      taskMetric: 'AI 시뮬레이션 추정 · 3명 중 1명이 이 지점에서 이탈',
+      suggestion:
+        '빈 상태에 "새 에이전트 만들기" 텍스트 버튼을 배치하고, 아이콘에는 레이블이나 툴팁을 붙이세요.',
+      frameId: 'demo-s3',
+      evidence: '화면에서 확인된 요소: "내 에이전트", "아직 만든 에이전트가 없습니다", "+"',
+      confidence: 88,
+    },
+    {
+      id: 'demo-f2',
+      severity: 'warning',
+      axis: 3,
+      axisLabel: '핵심 태스크 완료',
+      heuristic: '닐슨 #1 시스템 상태 가시성',
+      problem:
+        '"생성" 버튼을 누른 뒤 어디로 이동하는지 화면에서 예고되지 않습니다. 한 페르소나는 목록으로 돌아갈 것으로 예상했으나 실제로는 완료 화면으로 이동했습니다.',
+      taskMetric: 'AI 시뮬레이션 추정 · 완료한 2명 중 1명이 도착 화면을 잘못 예상',
+      suggestion:
+        '버튼 레이블을 "에이전트 생성하고 계속하기"처럼 결과가 드러나게 바꾸거나, 다음 단계를 미리 안내하세요.',
+      frameId: 'demo-s5',
+      evidence: '화면에서 확인된 요소: "사용할 모델", "생성"',
+      confidence: 76,
+    },
+    {
+      id: 'demo-f3',
+      severity: 'warning',
+      axis: 5,
+      axisLabel: '정보 구조 & 용어',
+      heuristic: '닐슨 #5 오류 방지',
+      problem:
+        'Enterprise 모델에 "관리자 승인 필요"라고 적혀 있지만, 현재 사용자가 관리자인지 화면에서 알 수 없습니다. 고급 페르소나가 이 지점에서 판단을 보류했습니다.',
+      taskMetric: 'AI 시뮬레이션 추정 · 모델 선택 단계에서 체류 시간 증가',
+      suggestion: '선택할 수 없는 옵션은 비활성 상태로 두고 그 이유를 함께 표시하세요.',
+      frameId: 'demo-s5',
+      evidence: '화면에서 확인된 요소: "Enterprise — 관리자 승인 필요"',
+      confidence: 71,
+    },
+    {
+      id: 'demo-f4',
+      severity: 'suggestion',
+      axis: 1,
+      axisLabel: '첫인상 & 가치 전달',
+      heuristic: '닐슨 #8 미적이고 최소한의 디자인',
+      problem:
+        '랜딩에서 세 페르소나 모두 망설임 없이 진입했습니다. 헤드라인과 단일 CTA 구조가 잘 작동하고 있습니다.',
+      taskMetric: 'AI 시뮬레이션 추정 · 첫 화면 평균 체류 6초',
+      suggestion: '현재 구조를 유지하되, 대시보드 빈 상태에도 같은 수준의 명확성을 적용하세요.',
+      frameId: 'demo-s1',
+      evidence: '화면에서 확인된 요소: "팀을 위한 AI 워크스페이스", "시작하기"',
+      confidence: 80,
+    },
+  ]
+
+  return {
+    id: `demo-report-${Date.now()}`,
+    projectName: '샘플 · 신규 에이전트 생성 흐름',
+    createdAt: new Date(),
+    sourceType: 'image',
+    aiMode: 'demo',
+    testMode: 'single',
+    personas,
+    frames,
+    flowConfig: config,
+    flowResult,
+    flowJudgment: judgment,
+    axisScores: AXES.map((axis, index) => ({
+      ...axis,
+      score: [78, 41, 55, 68, 59, 64][index] ?? 60,
+    })),
+    findings,
+    taskMetrics: {
+      completionRate: flowResult.metrics.successRate,
+      avgClicks: flowResult.metrics.avgSteps,
+      errorRate: 100 - flowResult.metrics.successRate,
+      dropoffPoint: '대시보드 빈 상태 — 생성 경로를 찾지 못함',
+      provenance: 'simulation_aggregate',
+      disclaimer:
+        'AI 페르소나 시뮬레이션 run을 집계한 값이며 실제 사용자 행동 지표가 아닙니다.',
+    },
+    overallSummary: flowResult.summary,
+    walkthrough: runs.flatMap((run) =>
+      run.events.map((event) => ({
+        frameId: event.fromFrameId,
+        personaName: run.personaName,
+        action: event.action,
+        thought: event.thought,
+        emotion: event.emotion,
+        observedElement: event.observedElement,
+        evidence: event.evidence,
+        confidence: event.confidence,
+      }))
+    ),
+    frameChats: frames.map((frame) => ({ frameId: frame.id, messages: [] })),
+    feedbackThreads: [],
+  }
+}
+
 export async function analyzeFlowDesignDemo(
   frames: Frame[],
   personas: PersonaConfig[],
@@ -314,6 +445,8 @@ export async function analyzeFlowDesignDemo(
       }))
     ),
     flowResult,
+    // 데모 경로도 실제와 같은 판정기를 통과시킨다.
+    flowJudgment: judgeFlowRuns(runs, config, frames),
   }
 }
 

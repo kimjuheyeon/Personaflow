@@ -44,9 +44,15 @@ interface OnboardingModalProps {
   open: boolean
   onClose: () => void
   onComplete: () => void
+  onOpenDemo: () => void
 }
 
-export default function OnboardingModal({ open, onClose, onComplete }: OnboardingModalProps) {
+export default function OnboardingModal({
+  open,
+  onClose,
+  onComplete,
+  onOpenDemo,
+}: OnboardingModalProps) {
   const [step, setStep] = useState(0)
 
   if (!open) return null
@@ -145,12 +151,16 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
             >
               건너뛰기
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {step > 0 && (
                 <Button variant="outline" onClick={() => setStep((value) => value - 1)}>
                   이전
                 </Button>
               )}
+              {/* 키 없이 결과부터 보고 판단할 수 있는 길을 항상 열어둔다. */}
+              <Button variant="outline" onClick={onOpenDemo}>
+                샘플 리포트 먼저 보기
+              </Button>
               <Button onClick={isLast ? handleComplete : () => setStep((value) => value + 1)}>
                 {isLast ? '테스트 시작하기' : '다음'}
                 {!isLast && <ArrowRight className="h-4 w-4" />}

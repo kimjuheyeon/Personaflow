@@ -8,6 +8,7 @@ import ApiKeyModal from './components/ApiKeyModal'
 import OnboardingModal from './components/OnboardingModal'
 import SNB from './components/SNB'
 import { useApiKey } from './hooks/useApiKey'
+import { createDemoReport } from './lib/ai/demo'
 import { getTestHistory, saveTestReport, updateTestReportFeedback } from './lib/history'
 import { imageToBase64 } from './lib/image'
 import { createDefaultFlowConfig, syncFlowConfig } from './lib/flow'
@@ -15,6 +16,7 @@ import type {
   ABTestConfig,
   AIMode,
   AppStep,
+  ClarificationRequest,
   DesignVariant,
   FeedbackThread,
   FigmaSource,
@@ -213,6 +215,18 @@ function App() {
     setHistory(saveTestReport(nextReport))
   }
 
+  const handleClarificationsChange = (clarifications: ClarificationRequest[]) => {
+    if (!report?.flowJudgment) return
+
+    const nextReport: TestReport = {
+      ...report,
+      flowJudgment: { ...report.flowJudgment, clarifications },
+    }
+
+    setReport(nextReport)
+    setHistory(saveTestReport(nextReport))
+  }
+
   const handleSaveKey = (key: string, m: string) => {
     setApiKey(key)
     setModel(m)
@@ -222,6 +236,28 @@ function App() {
   const handleClearKey = () => {
     clearApiKey()
     setKeyModalOpen(true)
+  }
+
+  /**
+   * API 키 없이 제품 전체를 보여주는 경로.
+   * 미리 만들어진 샘플 흐름을 실제와 같은 판정기에 통과시킨 리포트로 바로 이동한다.
+   */
+  const handleOpenDemo = () => {
+    const demoReport = createDemoReport()
+    setOnboardingOpen(false)
+    setTestMode('single')
+    setSourceType('image')
+    setFigmaSource(null)
+    setFigmaUrl('')
+    setAiMode('demo')
+    setFrames(demoReport.frames)
+    setVariants(createDefaultVariants())
+    setAbConfig(createDefaultABConfig())
+    if (demoReport.flowConfig) setFlowConfig(demoReport.flowConfig)
+    setPersonas(demoReport.personas)
+    setReport(demoReport)
+    setHistory(saveTestReport(demoReport))
+    setStep('report')
   }
 
   const rememberOnboardingSeen = () => {
@@ -244,6 +280,7 @@ function App() {
         currentReportId={report?.id}
         onOpenReport={handleOpenReport}
         onOpenGuide={() => setOnboardingOpen(true)}
+        onOpenDemo={handleOpenDemo}
       />
 
       {/* 메인 영역 */}
@@ -329,6 +366,7 @@ function App() {
               model={model}
               onRequireKey={() => setKeyModalOpen(true)}
               onFeedbackThreadsChange={handleFeedbackThreadsChange}
+              onClarificationsChange={handleClarificationsChange}
             />
           )}
         </main>
@@ -347,6 +385,7 @@ function App() {
         open={onboardingOpen}
         onClose={rememberOnboardingSeen}
         onComplete={rememberOnboardingSeen}
+        onOpenDemo={handleOpenDemo}
       />
     </div>
   )
