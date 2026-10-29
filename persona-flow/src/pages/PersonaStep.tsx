@@ -65,11 +65,18 @@ export default function PersonaStep({
   model,
   onRequireKey,
 }: PersonaStepProps) {
-  const [activeTab, setActiveTab] = useState<'ai' | 'manual'>('ai')
-  const [aiPersonas, setAiPersonas] = useState<PersonaConfig[]>([])
+  // 이전 단계에 다녀와도 이미 고른 AI 추천 페르소나가 사라지지 않도록 props에서 복원한다.
+  const [activeTab, setActiveTab] = useState<'ai' | 'manual'>(() =>
+    personas.length > 0 && personas.every((p) => !p.isAiGenerated) ? 'manual' : 'ai'
+  )
+  const [aiPersonas, setAiPersonas] = useState<PersonaConfig[]>(() =>
+    personas.filter((p) => p.isAiGenerated)
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(personas.filter((p) => p.isAiGenerated).map((p) => p.id))
+  )
   const [form, setForm] = useState(EMPTY_FORM)
 
   const handleAiRecommend = async () => {
@@ -78,12 +85,12 @@ export default function PersonaStep({
       return
     }
     if (frames.length === 0) {
-      setError('먼저 테스트할 화면을 연결하거나 업로드해주세요.')
+      setError('먼저 테스트할 Figma 화면을 연결해주세요.')
       return
     }
     if (!frames.some(hasFrameImage)) {
       setError(
-        '실제 AI 페르소나 추천에는 화면 이미지가 필요합니다. Figma 개인 액세스 토큰으로 화면 이미지를 가져오거나 PNG/JPG 이미지를 업로드해주세요.'
+        '실제 AI 페르소나 추천에는 화면 이미지가 필요합니다. 테스트 소스 단계에서 Figma 화면을 불러와주세요.'
       )
       return
     }
@@ -111,10 +118,16 @@ export default function PersonaStep({
   }
 
   const handleAddManual = () => {
-    if (!form.name.trim() || !form.role.trim()) return
+    if (!form.role.trim()) return
+    // 이름은 분석에 쓰이지 않지만 결과를 페르소나별로 묶는 키라서 비어 있으면 겹치지 않게 만든다.
+    const usedNames = new Set(personas.map((p) => p.name))
+    let fallbackIndex = personas.length + 1
+    while (usedNames.has(`페르소나 ${fallbackIndex}`)) fallbackIndex += 1
     const newPersona: PersonaConfig = {
       id: `manual-${Date.now()}`,
       ...form,
+      name: form.name.trim() || `페르소나 ${fallbackIndex}`,
+      context: form.context.trim() || EMPTY_FORM.context,
     }
     onPersonasChange([...personas, newPersona])
     setForm(EMPTY_FORM)
@@ -305,7 +318,7 @@ export default function PersonaStep({
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label className="text-xs">이름</Label>
+                <Label className="text-xs">이름 <span className="text-gray-400">(선택)</span></Label>
                 <Input
                   placeholder="예: 김지수"
                   value={form.name}
@@ -314,7 +327,7 @@ export default function PersonaStep({
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">직무 / 역할</Label>
+                <Label className="text-xs">직무 / 역할 <span className="text-red-500">*</span></Label>
                 <Input
                   placeholder="예: UX 디자이너"
                   value={form.role}
@@ -360,7 +373,7 @@ export default function PersonaStep({
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs">사용 목적</Label>
+              <Label className="text-xs">사용 목적 <span className="text-gray-400">(선택)</span></Label>
               <Input
                 placeholder="예: 새로운 협업 도구 도입 검토"
                 value={form.goal}
@@ -370,24 +383,18 @@ export default function PersonaStep({
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs">사용 맥락</Label>
-              <Select
+              <Label className="text-xs">사용 맥락 <span className="text-gray-400">(선택)</span></Label>
+              <Input
+                placeholder="예: 처음 써보는 유저, 기존 도구 대체 검토 중"
                 value={form.context}
-                onValueChange={(v) => setForm({ ...form, context: v })}
-              >
-                <SelectTrigger className="h-8 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="처음 써보는 유저">처음 써보는 유저</SelectItem>
-                  <SelectItem value="기존 도구 대체 검토 중">기존 도구 대체 검토 중</SelectItem>
-                </SelectContent>
-              </Select>
+                onChange={(e) => setForm({ ...form, context: e.target.value })}
+                className="h-8 text-sm"
+              />
             </div>
 
             <Button
               onClick={handleAddManual}
-              disabled={!form.name.trim() || !form.role.trim()}
+              disabled={!form.role.trim()}
               variant="outline"
               className="w-full"
             >

@@ -43,7 +43,7 @@ const NAVIGATION_STEPS: NavigationStep[] = [
   {
     id: 'upload',
     label: '테스트 소스',
-    description: 'Figma 또는 이미지',
+    description: 'Figma 프레임 연결',
     icon: Upload,
   },
   {
@@ -240,11 +240,6 @@ export default function SNB({
                         {report.projectName}
                       </span>
                       <span className="mt-1 flex items-center gap-1.5 text-[10px] text-slate-400">
-                        {report.testMode === 'ab' && (
-                          <span className="rounded-sm bg-amber-400/10 px-1.5 py-0.5 font-semibold text-amber-300">
-                            A/B
-                          </span>
-                        )}
                         {report.flowResult && (
                           <span className="rounded-sm bg-blue-400/10 px-1.5 py-0.5 font-semibold text-blue-300">
                             FLOW

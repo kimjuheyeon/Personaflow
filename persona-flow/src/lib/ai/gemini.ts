@@ -5,13 +5,10 @@
  */
 
 import type {
-  ABComparison,
-  ABTestConfig,
   AnalysisProgress,
   AnalysisRunContext,
   AnalysisStage,
   AnalysisValidation,
-  DesignVariant,
   PersonaConfig,
   ScreenObservation,
   AxisScore,
@@ -25,7 +22,6 @@ import type {
   TaskMetrics,
   WalkStep,
   ChatMessage,
-  VariantId,
   FrameDesignContext,
 } from '@/types'
 import { imageToVisionImages } from '@/lib/image'
@@ -35,11 +31,10 @@ import {
   AXES,
   personaSuggestionPrompt,
   analysisPrompt,
-  abAnalysisPrompt,
   chatSystemPrompt,
   flowAnalystPrompt,
 } from './prompts'
-import { validateAnalysisEvidence, withMetricProvenance } from './validation'
+import { validateAnalysisEvidence } from './validation'
 import { formatJudgment, judgeFlowRuns, matchFlowEdge } from './judge'
 import {
   AnalysisAbortedError,
@@ -266,7 +261,7 @@ interface FramePartOptions {
   maxDetailImages?: number
 }
 
-function frameDesignContextText(frame: FrameInput): string | null {
+function frameDesignContextText(frame: Pick<FrameInput, 'designContext'>): string | null {
   const context = frame.designContext
   if (!context || context.source !== 'figma_api') return null
   const lines = [
@@ -299,14 +294,30 @@ function frameDesignContextText(frame: FrameInput): string | null {
     : null
 }
 
+/** Figma 원문 텍스트가 있으면 글자를 읽기 위한 상세 구간은 최대 이 개수만 보낸다. */
+const FIGMA_TEXT_MAX_DETAIL_IMAGES = 2
+
+function hasFigmaTexts(context: FrameDesignContext | undefined): boolean {
+  return context?.source === 'figma_api' && context.visibleTexts.length > 0
+}
+
+/** 문구는 Figma 원문으로 확보되므로, 상세 구간은 긴 화면의 시각 요소 확인용으로만 남긴다. */
+function detailImageBudget(
+  context: FrameDesignContext | undefined,
+  requested: number | undefined
+): number | undefined {
+  if (!hasFigmaTexts(context)) return requested
+  return Math.min(requested ?? FIGMA_TEXT_MAX_DETAIL_IMAGES, FIGMA_TEXT_MAX_DETAIL_IMAGES)
+}
+
 async function appendFrameImageParts(
   parts: Part[],
-  source: File | string,
+  frame: FrameInput,
   options: FramePartOptions
 ): Promise<void> {
-  const images = await imageToVisionImages(source, {
+  const images = await imageToVisionImages(frame.file ?? frame.imageUrl, {
     includeDetails: options.imageDetail === 'detailed',
-    maxDetailImages: options.maxDetailImages,
+    maxDetailImages: detailImageBudget(frame.designContext, options.maxDetailImages),
   })
   for (const image of images) {
     parts.push({ text: `이미지 보기: ${image.label}` })
@@ -332,46 +343,14 @@ async function buildFrameParts(
     if (designContext) parts.push({ text: designContext })
     if (f.file || f.imageUrl) {
       try {
-        await appendFrameImageParts(parts, f.file ?? f.imageUrl, options)
+        await appendFrameImageParts(parts, f, options)
       } catch {
         throw new Error(
-          `"${getFrameDisplayName(f)}" 화면 이미지를 AI에 전달하지 못했습니다. Figma 화면 이미지를 다시 가져오거나 PNG/JPG로 업로드해주세요.`
+          `"${getFrameDisplayName(f)}" 화면 이미지를 AI에 전달하지 못했습니다. 테스트 소스 단계에서 Figma 화면을 다시 불러와주세요.`
         )
       }
     } else {
       parts.push({ text: '(아직 화면 이미지가 연결되지 않아 화면 메타데이터만 제공합니다.)' })
-    }
-  }
-  return parts
-}
-
-async function buildVariantParts(
-  variants: DesignVariant[],
-  options: FramePartOptions = {}
-): Promise<Part[]> {
-  const parts: Part[] = []
-  for (const variant of variants) {
-    parts.push({ text: `■ ${variant.name} (${variant.id}안)` })
-    for (let i = 0; i < variant.frames.length; i++) {
-      const frame = variant.frames[i]
-      parts.push({
-        text: `■ ${variant.id}안 ${frame.name} | 순서: ${
-          frame.flowOrder ?? i + 1
-        } | ID: ${frame.id}${framePromptSecondary(frame)}`,
-      })
-      const designContext = frameDesignContextText(frame)
-      if (designContext) parts.push({ text: designContext })
-      if (frame.file || frame.imageUrl) {
-        try {
-          await appendFrameImageParts(parts, frame.file ?? frame.imageUrl, options)
-        } catch {
-          throw new Error(
-            `"${getFrameDisplayName(frame)}" 화면 이미지를 AI에 전달하지 못했습니다. Figma 화면 이미지를 다시 가져오거나 PNG/JPG로 업로드해주세요.`
-          )
-        }
-      } else {
-        parts.push({ text: '(아직 화면 이미지가 연결되지 않아 화면 메타데이터만 제공합니다.)' })
-      }
     }
   }
   return parts
@@ -662,7 +641,6 @@ export interface AnalysisResult {
   taskMetrics: TaskMetrics
   overallSummary: string
   walkthrough: WalkStep[]
-  abComparison?: ABComparison
   flowResult?: FlowTestResult
   flowJudgment?: FlowJudgment
   validation?: AnalysisValidation
@@ -765,119 +743,12 @@ const analysisSchema = {
   ],
 }
 
-const variantScoresSchema = {
-  type: 'ARRAY',
-  items: {
-    type: 'OBJECT',
-    properties: {
-      variantId: { type: 'STRING', enum: ['A', 'B'] },
-      axisScores: {
-        type: 'ARRAY',
-        items: {
-          type: 'OBJECT',
-          properties: {
-            axis: { type: 'INTEGER' },
-            label: { type: 'STRING' },
-            score: { type: 'INTEGER' },
-          },
-          required: ['axis', 'label', 'score'],
-        },
-      },
-      taskMetrics: {
-        type: 'OBJECT',
-        properties: {
-          completionRate: { type: 'INTEGER' },
-          avgClicks: { type: 'NUMBER' },
-          errorRate: { type: 'INTEGER' },
-          dropoffPoint: { type: 'STRING' },
-        },
-        required: ['completionRate', 'avgClicks', 'errorRate', 'dropoffPoint'],
-      },
-      strengths: {
-        type: 'ARRAY',
-        items: { type: 'STRING' },
-      },
-      weaknesses: {
-        type: 'ARRAY',
-        items: { type: 'STRING' },
-      },
-    },
-    required: ['variantId', 'axisScores', 'taskMetrics', 'strengths', 'weaknesses'],
-  },
-}
-
-const abAnalysisSchema = {
-  ...analysisSchema,
-  properties: {
-    ...analysisSchema.properties,
-    abComparison: {
-      type: 'OBJECT',
-      properties: {
-        winner: { type: 'STRING', enum: ['A', 'B', 'tie'] },
-        confidence: { type: 'INTEGER' },
-        summary: { type: 'STRING' },
-        recommendation: { type: 'STRING' },
-        keyInsights: {
-          type: 'ARRAY',
-          items: { type: 'STRING' },
-        },
-        variantScores: variantScoresSchema,
-        personaPreferences: {
-          type: 'ARRAY',
-          items: {
-            type: 'OBJECT',
-            properties: {
-              personaId: { type: 'STRING' },
-              personaName: { type: 'STRING' },
-              preferredVariant: { type: 'STRING', enum: ['A', 'B', 'tie'] },
-              reason: { type: 'STRING' },
-            },
-            required: ['personaName', 'preferredVariant', 'reason'],
-          },
-        },
-      },
-      required: [
-        'winner',
-        'confidence',
-        'summary',
-        'recommendation',
-        'keyInsights',
-        'variantScores',
-        'personaPreferences',
-      ],
-    },
-  },
-  required: [...analysisSchema.required, 'abComparison'],
-}
-
 interface RawAnalysis {
   walkthrough: WalkStep[]
   axisScores: { axis: number; label: string; score: number }[]
   findings: Omit<Finding, 'id'>[]
   taskMetrics: TaskMetrics
   overallSummary: string
-  abComparison?: RawABComparison
-}
-
-interface RawABComparison {
-  winner: VariantId | 'tie'
-  confidence: number
-  summary: string
-  recommendation: string
-  keyInsights: string[]
-  variantScores: {
-    variantId: VariantId
-    axisScores: { axis: number; label: string; score: number }[]
-    taskMetrics: TaskMetrics
-    strengths: string[]
-    weaknesses: string[]
-  }[]
-  personaPreferences: {
-    personaId?: string
-    personaName: string
-    preferredVariant: VariantId | 'tie'
-    reason: string
-  }[]
 }
 
 function normalizeAxisScores(
@@ -890,36 +761,6 @@ function normalizeAxisScores(
     score: Math.max(0, Math.min(100, Math.round(score.score))),
     icon: iconByAxis.get(score.axis) ?? '📊',
   }))
-}
-
-function normalizeVariantId(value: string | undefined): VariantId | 'tie' {
-  if (value === 'A' || value === 'B' || value === 'tie') return value
-  return 'tie'
-}
-
-function normalizeABComparison(raw: RawABComparison | undefined): ABComparison | undefined {
-  if (!raw) return undefined
-
-  return {
-    winner: normalizeVariantId(raw.winner),
-    confidence: Math.max(0, Math.min(100, Math.round(raw.confidence ?? 0))),
-    summary: raw.summary ?? '',
-    recommendation: raw.recommendation ?? '',
-    keyInsights: raw.keyInsights ?? [],
-    variantScores: (raw.variantScores ?? []).map((variant) => ({
-      variantId: normalizeVariantId(variant.variantId) === 'B' ? 'B' : 'A',
-      axisScores: normalizeAxisScores(variant.axisScores),
-      taskMetrics: withMetricProvenance(variant.taskMetrics, 'ai_estimate'),
-      strengths: variant.strengths ?? [],
-      weaknesses: variant.weaknesses ?? [],
-    })),
-    personaPreferences: (raw.personaPreferences ?? []).map((preference) => ({
-      personaId: preference.personaId,
-      personaName: preference.personaName,
-      preferredVariant: normalizeVariantId(preference.preferredVariant),
-      reason: preference.reason,
-    })),
-  }
 }
 
 export async function analyzeDesign(
@@ -1136,8 +977,7 @@ function flowTesterPrompt(
 아래 테스트는 화면별 감상평이 아니라, 각 페르소나가 진입 화면에서 하나의 미션을 수행하는 Flow UT입니다.
 
 ## 테스트
-- 테스트명: ${config.title}
-- 시나리오: ${config.scenario}
+- 시나리오: ${config.scenario || '(별도 시나리오 없음)'}
 - 미션: ${config.mission}
 - 진입 화면 ID: ${config.entryFrameId}
 - 최대 행동 단계: ${config.maxSteps}
@@ -1504,85 +1344,6 @@ ${formatJudgment(judgment, frames)}`,
   }
 }
 
-export async function analyzeABDesign(
-  apiKey: string,
-  model: string,
-  variants: DesignVariant[],
-  personas: PersonaConfig[],
-  abConfig: ABTestConfig,
-  context?: AnalysisRunContext
-): Promise<AnalysisResult> {
-  const checkpoint = context?.checkpoint
-  const observationFrames = variants.flatMap((variant) =>
-    variant.frames.map((frame) => ({
-      ...frame,
-      name: `${variant.id}안 ${frame.name}`,
-      userLabel: `${variant.name} · ${getFrameDisplayName(frame)}`,
-    }))
-  )
-  let observations = checkpoint?.observations
-  if (!observations) {
-    observations = await observeScreens(apiKey, model, observationFrames, {}, context)
-    if (checkpoint) checkpoint.observations = observations
-  } else {
-    reportProgress(context, 'observe', 1, 1)
-  }
-  const variantParts = await buildVariantParts(variants, { imageDetail: 'overview' })
-  const groundedPrompt = `${abAnalysisPrompt(personas, variants, abConfig)}
-
-## 사전 화면 판독 결과
-아래는 각 시안의 고해상도 상세 구간에서 실제 확인한 문구와 조작 요소입니다.
-A/B 차이와 발견점은 반드시 이 관찰 결과 또는 이어지는 전체 화면에서 확인되는 근거와 연결하세요.
-
-${formatScreenObservations(observations)}`
-  const text = await generateContent({
-    apiKey,
-    model,
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          {
-            text: groundedPrompt,
-          },
-          ...variantParts,
-        ],
-      },
-    ],
-    responseSchema: abAnalysisSchema,
-    temperature: 0.6,
-    signal: context?.signal,
-    onRetry: retryReporter(context, 'analyze', 0, 1),
-  })
-
-  const raw = parseJson<RawAnalysis>(text)
-  reportProgress(context, 'analyze', 1, 1)
-  const findings: Finding[] = (raw.findings ?? []).map((finding, index) => ({
-    id: `f-${index + 1}`,
-    ...finding,
-    confidence:
-      finding.confidence === undefined ? undefined : clampConfidence(finding.confidence),
-  }))
-
-  const validated = validateAnalysisEvidence({
-    frames: observationFrames,
-    observations,
-    findings,
-    walkthrough: raw.walkthrough ?? [],
-    taskMetrics: raw.taskMetrics,
-  })
-
-  return {
-    axisScores: normalizeAxisScores(raw.axisScores),
-    findings: validated.findings,
-    taskMetrics: validated.taskMetrics,
-    overallSummary: raw.overallSummary,
-    walkthrough: validated.walkthrough,
-    abComparison: normalizeABComparison(raw.abComparison),
-    validation: validated.validation,
-  }
-}
-
 /* ── 3) 인라인 채팅 ── */
 
 export async function chatWithPersona(
@@ -1594,6 +1355,7 @@ export async function chatWithPersona(
     userLabel?: string
     file?: File
     imageUrl: string
+    designContext?: FrameDesignContext
   } | null,
   persona: PersonaConfig,
   history: ChatMessage[],
@@ -1604,7 +1366,7 @@ export async function chatWithPersona(
     try {
       const images = await imageToVisionImages(frame.file ?? frame.imageUrl, {
         includeDetails: true,
-        maxDetailImages: 4,
+        maxDetailImages: detailImageBudget(frame.designContext, 4),
       })
       for (const image of images) {
         firstParts.push({ text: `현재 화면 보기: ${image.label}` })
@@ -1614,6 +1376,9 @@ export async function chatWithPersona(
       /* 이미지 없이도 텍스트로 진행 */
     }
   }
+  // 상세 구간을 줄인 만큼 문구는 Figma 원문으로 전달한다.
+  const designContext = frame ? frameDesignContextText(frame) : null
+  if (designContext) firstParts.push({ text: designContext })
   const frameName = frame ? getFrameDisplayName(frame) : '제공된 화면'
   firstParts.push({
     text: `지금 보고 있는 화면: "${frameName}". 이 화면을 사용하는 입장에서 답하세요.`,

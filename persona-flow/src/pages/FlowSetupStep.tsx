@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowRight,
@@ -29,15 +29,6 @@ interface FlowSetupStepProps {
   onNext: () => void
 }
 
-const UT_PROTOCOL_STEPS = [
-  '상황 부여',
-  '미션 수행',
-  'Think Aloud',
-  '예상 시간 측정',
-  '성공 여부 판정',
-  '사후 인터뷰',
-]
-
 function orderedFrames(frames: Frame[]): Frame[] {
   return [...frames].sort(
     (a, b) => (a.flowOrder ?? Number.MAX_SAFE_INTEGER) - (b.flowOrder ?? Number.MAX_SAFE_INTEGER)
@@ -52,6 +43,8 @@ export default function FlowSetupStep({
   onNext,
 }: FlowSetupStepProps) {
   const manualEdgeCounter = useRef(0)
+  // 입력 중에는 자유롭게 지우고 쓰게 두고, 포커스를 벗어날 때 범위를 맞춘다.
+  const [maxStepsDraft, setMaxStepsDraft] = useState(String(config.maxSteps))
   const sortedFrames = orderedFrames(frames)
   const issues = validateFlowConfig(config, sortedFrames)
   const shortestPath = findShortestPath(config)
@@ -88,7 +81,7 @@ export default function FlowSetupStep({
           id: `edge-manual-${manualEdgeCounter.current}`,
           fromFrameId,
           toFrameId,
-          actionLabel: '화면 전환을 일으키는 요소를 선택한다',
+          actionLabel: '',
         },
       ],
     })
@@ -160,7 +153,7 @@ export default function FlowSetupStep({
             <div>
               <h3 className="text-sm font-semibold text-gray-900">빠른 화면 리뷰 준비 완료</h3>
               <p className="mt-1 text-xs leading-relaxed text-gray-500">
-                업로드한 {frames.length}개 화면을 현재 순서대로 분석합니다. 전체 과업의 성공률이나
+                가져온 {frames.length}개 화면을 현재 순서대로 분석합니다. 전체 과업의 성공률이나
                 이탈 경로보다 화면별 문제 발견에 적합합니다.
               </p>
             </div>
@@ -172,7 +165,7 @@ export default function FlowSetupStep({
             <section className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="flow-title" className="text-xs font-semibold text-gray-700">
-                  테스트명
+                  테스트명 <span className="font-normal text-gray-400">(선택 · 비우면 미션으로 이름을 정합니다)</span>
                 </Label>
                 <Input
                   id="flow-title"
@@ -184,7 +177,7 @@ export default function FlowSetupStep({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="flow-scenario" className="text-xs font-semibold text-gray-700">
-                  사용자 시나리오
+                  사용자 시나리오 <span className="font-normal text-gray-400">(선택)</span>
                 </Label>
                 <Textarea
                   id="flow-scenario"
@@ -196,7 +189,7 @@ export default function FlowSetupStep({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="flow-mission" className="text-xs font-semibold text-gray-700">
-                  수행 미션
+                  수행 미션 <span className="text-red-500">*</span>
                 </Label>
                 <Textarea
                   id="flow-mission"
@@ -259,18 +252,18 @@ export default function FlowSetupStep({
                   type="number"
                   min={2}
                   max={20}
-                  value={config.maxSteps}
-                  onChange={(event) =>
-                    onConfigChange({
-                      ...config,
-                      maxSteps: Math.max(2, Math.min(20, Number(event.target.value) || 2)),
-                    })
-                  }
+                  value={maxStepsDraft}
+                  onChange={(event) => setMaxStepsDraft(event.target.value)}
+                  onBlur={() => {
+                    const maxSteps = Math.max(2, Math.min(20, Number(maxStepsDraft) || config.maxSteps))
+                    setMaxStepsDraft(String(maxSteps))
+                    onConfigChange({ ...config, maxSteps })
+                  }}
                   className="h-10 bg-white"
                 />
               </div>
               <div className="rounded-md border border-blue-100 bg-blue-50 p-3">
-                <p className="text-[11px] font-semibold text-blue-900">성공 판정</p>
+                <p className="text-[11px] font-semibold text-blue-900">성공 기준</p>
                 <p className="mt-1 text-xs leading-relaxed text-blue-800">
                   테스터가 {getFlowFrameLabel(sortedFrames, config.successFrameId)}에 도달하면
                   과업 성공으로 판정합니다.
@@ -279,40 +272,15 @@ export default function FlowSetupStep({
             </aside>
           </div>
 
-          <section className="rounded-lg border border-blue-100 bg-blue-50/70 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-blue-950">AI UT 진행 절차</p>
-                <p className="mt-1 text-xs text-blue-800">
-                  각 페르소나는 아래 순서로 독립적인 테스트 세션을 수행합니다.
-                </p>
-              </div>
-              <p className="text-[11px] text-blue-700">
-                시간은 실제 사람이 아닌 AI의 망설임 기반 예상치입니다.
-              </p>
-            </div>
-            <ol className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
-              {UT_PROTOCOL_STEPS.map((step, index) => (
-                <li
-                  key={step}
-                  className="rounded-md border border-blue-100 bg-white px-3 py-2.5"
-                >
-                  <span className="text-[10px] font-semibold text-blue-500">
-                    {index + 1}
-                  </span>
-                  <p className="mt-1 text-xs font-semibold text-gray-800">{step}</p>
-                </li>
-              ))}
-            </ol>
-          </section>
-
           <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-sm font-semibold text-gray-900">Flow 연결</h3>
+                <h3 className="text-sm font-semibold text-gray-900">
+                  화면 연결 <span className="text-red-500">*</span>
+                </h3>
                 <p className="mt-1 text-xs text-gray-500">
-                  AI에게 공개되지 않는 내부 판정 기준입니다. 실제 화면 전환과 맞게 연결을
-                  수정하거나 분기를 추가하세요.
+                  각 화면에서 무엇을 누르면 다음 화면으로 가는지 적어주세요. AI 페르소나에게는
+                  보여주지 않고, 테스트가 끝난 뒤 실제 행동과 비교하는 정답지로만 씁니다.
                 </p>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={addEdge}>
@@ -323,7 +291,7 @@ export default function FlowSetupStep({
 
             <div className="overflow-x-auto pb-2">
               <div className="flex min-w-max items-center gap-2">
-                {sortedFrames.map((frame, index) => {
+                {sortedFrames.map((frame) => {
                   const isEntry = frame.id === config.entryFrameId
                   const isSuccess = frame.id === config.successFrameId
                   const isOnPath = shortestPath.includes(frame.id)
@@ -371,9 +339,6 @@ export default function FlowSetupStep({
                           </p>
                         </div>
                       </div>
-                      {index < sortedFrames.length - 1 && (
-                        <ArrowRight className="h-4 w-4 flex-shrink-0 text-gray-300" />
-                      )}
                     </div>
                   )
                 })}
@@ -382,10 +347,10 @@ export default function FlowSetupStep({
 
             <div className="space-y-2">
               <div className="hidden grid-cols-[1fr_28px_1fr_1.3fr_36px] gap-2 px-2.5 text-[11px] font-semibold text-gray-400 md:grid">
-                <span>현재 화면</span>
+                <span>이 화면에서</span>
                 <span />
-                <span>실제 이동 화면</span>
-                <span>숨겨진 전환 기준</span>
+                <span>이동하는 화면</span>
+                <span>누르는 요소</span>
                 <span />
               </div>
               {config.edges.map((edge) => (
@@ -419,11 +384,11 @@ export default function FlowSetupStep({
                     ))}
                   </select>
                   <Input
-                    aria-label="숨겨진 전환 기준"
+                    aria-label="누르는 요소"
                     value={edge.actionLabel}
                     onChange={(event) => updateEdge(edge.id, { actionLabel: event.target.value })}
-                    placeholder="예: 새 프로젝트 버튼을 선택한다"
-                    className="h-9 bg-white text-xs"
+                    placeholder="예: '새 프로젝트' 버튼"
+                    className={`h-9 bg-white text-xs ${edge.actionLabel.trim() ? '' : 'border-amber-400'}`}
                   />
                   <Button
                     type="button"

@@ -2,35 +2,27 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Check, Circle, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
-import { analyzeABDesignDemo, analyzeDesignDemo, analyzeFlowDesignDemo } from '@/lib/ai/demo'
-import { analyzeABDesign, analyzeDesign, analyzeFlowDesign } from '@/lib/ai/gemini'
+import { analyzeDesignDemo, analyzeFlowDesignDemo } from '@/lib/ai/demo'
+import { analyzeDesign, analyzeFlowDesign } from '@/lib/ai/gemini'
 import { formatWait, isAbortError } from '@/lib/ai/retry'
 import { getFrameProjectLabel } from '@/lib/frameNaming'
 import type {
-  ABTestConfig,
   AIMode,
   AnalysisCheckpoint,
   AnalysisProgress,
   AnalysisRunContext,
   AnalysisStage,
-  DesignVariant,
   FigmaSource,
   FlowTestConfig,
   PersonaConfig,
   Frame,
-  SourceType,
-  TestMode,
   TestReport,
 } from '@/types'
 
 interface RunningStepProps {
   personas: PersonaConfig[]
   frames: Frame[]
-  testMode: TestMode
-  variants: DesignVariant[]
-  abConfig: ABTestConfig
   flowConfig: FlowTestConfig
-  sourceType: SourceType
   figmaSource: FigmaSource | null
   aiMode: AIMode
   apiKey: string
@@ -86,29 +78,14 @@ function hasFrameImage(frame: Frame): boolean {
 
 function buildProjectName(
   frames: Frame[],
-  testMode: TestMode,
-  abConfig: ABTestConfig,
-  sourceType: SourceType,
   figmaSource: FigmaSource | null,
   flowConfig: FlowTestConfig
 ): string {
-  if (testMode === 'ab') {
-    const goal = abConfig.goal.trim()
-    if (sourceType === 'figma') {
-      const label = goal || figmaSource?.fileName || 'Figma'
-      return `Figma A/B 테스트 · ${label}`
-    }
-    return goal ? `A/B 테스트 · ${goal}` : '화면 A/B 테스트'
-  }
   if (flowConfig.mode === 'flow') {
     return flowConfig.title.trim() || `Flow UT · ${flowConfig.mission.trim() || '사용자 미션'}`
   }
-  if (sourceType === 'figma') {
-    return figmaSource?.fileName
-      ? `Figma 플로우 · ${figmaSource.fileName}`
-      : 'Figma 플로우 테스트'
-  }
-  if (frames.length === 0) return '시안 분석'
+  if (figmaSource?.fileName) return `Figma 플로우 · ${figmaSource.fileName}`
+  if (frames.length === 0) return 'Figma 플로우 테스트'
   if (frames.length === 1) return getFrameProjectLabel(frames[0])
   return `${getFrameProjectLabel(frames[0])} 외 ${frames.length - 1}건`
 }
@@ -116,11 +93,7 @@ function buildProjectName(
 export default function RunningStep({
   personas,
   frames,
-  testMode,
-  variants,
-  abConfig,
   flowConfig,
-  sourceType,
   figmaSource,
   aiMode,
   apiKey,
@@ -129,7 +102,7 @@ export default function RunningStep({
   onBack,
   onRequireKey,
 }: RunningStepProps) {
-  const isFlowTest = testMode === 'single' && flowConfig.mode === 'flow'
+  const isFlowTest = flowConfig.mode === 'flow'
   const stageSteps = isFlowTest ? FLOW_STEPS : STEPS
   const [isDone, setIsDone] = useState(false)
   const [progressState, setProgressState] = useState<AnalysisProgress | null>(null)
@@ -155,14 +128,9 @@ export default function RunningStep({
       return
     }
 
-    const targetFrames =
-      testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
-    if (
-      aiMode === 'gemini_free' &&
-      (targetFrames.length === 0 || !targetFrames.every(hasFrameImage))
-    ) {
+    if (aiMode === 'gemini_free' && (frames.length === 0 || !frames.every(hasFrameImage))) {
       setError(
-        '실제 AI 분석에는 화면 이미지가 필요합니다. Figma 개인 액세스 토큰으로 화면 이미지를 가져오거나 PNG/JPG 이미지를 업로드한 뒤 다시 실행하세요.'
+        '실제 AI 분석에는 화면 이미지가 필요합니다. 테스트 소스 단계에서 Figma 화면을 다시 불러온 뒤 실행하세요.'
       )
       return
     }
@@ -185,43 +153,25 @@ export default function RunningStep({
     }
 
     try {
-      const result =
-        testMode === 'ab'
-          ? aiMode === 'demo'
-            ? await analyzeABDesignDemo(variants, personas, abConfig)
-            : await analyzeABDesign(apiKey, model, variants, personas, abConfig, context)
-          : isFlowTest
-          ? aiMode === 'demo'
-            ? await analyzeFlowDesignDemo(frames, personas, flowConfig)
-            : await analyzeFlowDesign(apiKey, model, frames, personas, flowConfig, context)
-          : aiMode === 'demo'
-          ? await analyzeDesignDemo(frames, personas, sourceType, figmaSource)
-          : await analyzeDesign(apiKey, model, frames, personas, context)
+      const result = isFlowTest
+        ? aiMode === 'demo'
+          ? await analyzeFlowDesignDemo(frames, personas, flowConfig)
+          : await analyzeFlowDesign(apiKey, model, frames, personas, flowConfig, context)
+        : aiMode === 'demo'
+        ? await analyzeDesignDemo(frames, personas, figmaSource)
+        : await analyzeDesign(apiKey, model, frames, personas, context)
       if (controller.signal.aborted) return
-
-      const reportFrames = targetFrames
 
       const report: TestReport = {
         id: `report-${Date.now()}`,
-        projectName: buildProjectName(
-          reportFrames,
-          testMode,
-          abConfig,
-          sourceType,
-          figmaSource,
-          flowConfig
-        ),
+        projectName: buildProjectName(frames, figmaSource, flowConfig),
         createdAt: new Date(),
-        sourceType,
+        sourceType: 'figma',
         figmaSource: figmaSource ?? undefined,
         aiMode,
-        testMode,
         personas,
-        frames: reportFrames,
-        variants: testMode === 'ab' ? variants : undefined,
-        abConfig: testMode === 'ab' ? abConfig : undefined,
-        abComparison: result.abComparison,
-        flowConfig: testMode === 'single' ? flowConfig : undefined,
+        frames,
+        flowConfig,
         flowResult: result.flowResult,
         flowJudgment: result.flowJudgment,
         axisScores: result.axisScores,
@@ -230,7 +180,7 @@ export default function RunningStep({
         overallSummary: result.overallSummary,
         walkthrough: result.walkthrough,
         validation: result.validation,
-        frameChats: reportFrames.map((f) => ({ frameId: f.id, messages: [] })),
+        frameChats: frames.map((f) => ({ frameId: f.id, messages: [] })),
         feedbackThreads: [],
       }
 
@@ -244,7 +194,6 @@ export default function RunningStep({
       setError(e instanceof Error ? e.message : 'AI 분석에 실패했습니다.')
     }
   }, [
-    abConfig,
     aiMode,
     apiKey,
     figmaSource,
@@ -253,9 +202,6 @@ export default function RunningStep({
     isFlowTest,
     model,
     personas,
-    sourceType,
-    testMode,
-    variants,
     stageSteps,
     onComplete,
   ])
@@ -442,25 +388,15 @@ export default function RunningStep({
             </p>
             <div className="flex items-center gap-2">
               <span className="text-2xl font-bold text-blue-600">
-                {testMode === 'ab'
-                  ? variants.reduce((sum, variant) => sum + variant.frames.length, 0)
-                  : frames.length}
+                {frames.length}
               </span>
               <span className="text-xs text-gray-500">개 화면</span>
             </div>
-            {testMode === 'ab' && (
-              <p className="text-xs text-gray-400 mt-1">
-                A안 {variants.find((variant) => variant.id === 'A')?.frames.length ?? 0}개 · B안{' '}
-                {variants.find((variant) => variant.id === 'B')?.frames.length ?? 0}개
-              </p>
-            )}
           </div>
         </div>
 
         <p className="text-xs text-gray-400 text-center">
-          {testMode === 'ab'
-            ? 'Claude가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
-            : isFlowTest
+          {isFlowTest
             ? 'Claude가 설정된 행동 연결 안에서 각 페르소나의 미션 수행 경로를 평가합니다'
             : 'Claude가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
         </p>

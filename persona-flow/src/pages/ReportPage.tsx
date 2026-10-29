@@ -6,7 +6,6 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  GitCompare,
   Route,
   Target,
   MousePointerClick,
@@ -33,7 +32,6 @@ import type {
   WalkEmotion,
   ChatMessage,
   FeedbackThread,
-  Frame,
   FlowOutcome,
 } from '@/types'
 
@@ -82,24 +80,9 @@ function formatDuration(totalSeconds: number): string {
   return remainder > 0 ? `${minutes}분 ${remainder}초` : `${minutes}분`
 }
 
-function findReportFrame(
-  report: TestReport,
-  frameId: string
-): { frame: Frame; variantName?: string } | undefined {
-  for (const variant of report.variants ?? []) {
-    const frame = variant.frames.find((item) => item.id === frameId)
-    if (frame) return { frame, variantName: `${variant.id}안` }
-  }
-
-  const frame = report.frames.find((item) => item.id === frameId)
-  return frame ? { frame } : undefined
-}
-
 function frameNameFromReport(report: TestReport, frameId: string): string {
-  const context = findReportFrame(report, frameId)
-  if (!context) return frameId
-  const name = getFrameDisplayName(context.frame)
-  return context.variantName ? `${context.variantName} ${name}` : name
+  const frame = report.frames.find((item) => item.id === frameId)
+  return frame ? getFrameDisplayName(frame) : frameId
 }
 
 const DIGITAL_LABEL: Record<string, string> = {
@@ -271,161 +254,6 @@ function SummaryTab({ report }: { report: TestReport }) {
               </div>
             </div>
           ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ABComparisonTab({ report }: { report: TestReport }) {
-  const comparison = report.abComparison
-
-  if (!comparison) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <p className="text-sm">A/B 비교 데이터가 없습니다.</p>
-      </div>
-    )
-  }
-
-  const winnerLabel =
-    comparison.winner === 'tie' ? '상황별 우세' : `${comparison.winner}안 우세`
-
-  return (
-    <div className="space-y-5">
-      <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <GitCompare className="w-4 h-4 text-blue-600" />
-            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
-              A/B 테스트 결과
-            </h3>
-          </div>
-          <span className="text-xs px-2 py-0.5 rounded font-semibold bg-slate-900 text-white">
-            {winnerLabel}
-          </span>
-        </div>
-        <div className="p-4 grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-4">
-          <div className="space-y-3">
-            <div>
-              <p className="text-xs font-semibold text-gray-500 mb-1">종합 판단</p>
-              <p className="text-sm text-gray-800 leading-relaxed">{comparison.summary}</p>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-green-700 mb-1">적용 권고</p>
-              <p className="text-sm text-gray-700 bg-green-50 border border-green-200 rounded px-3 py-2 leading-relaxed">
-                {comparison.recommendation}
-              </p>
-            </div>
-          </div>
-          <div className="border border-gray-200 rounded-md p-3 bg-gray-50">
-            <p className="text-xs font-semibold text-gray-500 mb-2">확신도</p>
-            <div className="flex items-end gap-2 mb-2">
-              <span className="text-3xl font-bold text-blue-600">{comparison.confidence}</span>
-              <span className="text-xs text-gray-500 pb-1">/ 100</span>
-            </div>
-            <Progress value={comparison.confidence} className="h-2" />
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {comparison.variantScores.map((variant) => (
-          <div
-            key={variant.variantId}
-            className="border border-gray-200 rounded-md bg-white overflow-hidden"
-          >
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900">{variant.variantId}안</h3>
-              <span className="text-xs text-gray-500">
-                완료율 {variant.taskMetrics.completionRate}% · 오류율 {variant.taskMetrics.errorRate}%
-              </span>
-            </div>
-            <div className="p-4 space-y-4">
-              <div className="space-y-2">
-                {variant.axisScores.map((axis) => (
-                  <div key={axis.axis} className="grid grid-cols-[1fr_2fr_2rem] gap-3 items-center">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-sm">{axis.icon}</span>
-                      <span className="text-xs text-gray-600 truncate">{axis.label}</span>
-                    </div>
-                    <Progress value={axis.score} className={`h-1.5 ${scoreBarColor(axis.score)}`} />
-                    <span className={`text-xs font-bold text-right ${scoreColor(axis.score)}`}>
-                      {axis.score}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs font-semibold text-green-700 mb-1">강점</p>
-                  <ul className="space-y-1">
-                    {variant.strengths.map((item) => (
-                      <li key={item} className="text-xs text-gray-600 leading-relaxed">
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-red-700 mb-1">약점</p>
-                  <ul className="space-y-1">
-                    {variant.weaknesses.map((item) => (
-                      <li key={item} className="text-xs text-gray-600 leading-relaxed">
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-      <p className="text-[11px] leading-relaxed text-gray-400">
-        A/B 완료율과 오류율은 실제 트래픽 실험값이 아니라 동일 조건의 AI 시뮬레이션 추정치입니다.
-      </p>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100">
-            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
-              핵심 인사이트
-            </h3>
-          </div>
-          <div className="p-4 space-y-2">
-            {comparison.keyInsights.map((insight) => (
-              <p key={insight} className="text-sm text-gray-700 leading-relaxed">
-                {insight}
-              </p>
-            ))}
-          </div>
-        </div>
-
-        <div className="border border-gray-200 rounded-md bg-white overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100">
-            <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
-              페르소나별 선호
-            </h3>
-          </div>
-          <div className="divide-y divide-gray-100">
-            {comparison.personaPreferences.map((preference) => (
-              <div key={`${preference.personaName}-${preference.preferredVariant}`} className="px-4 py-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-semibold text-gray-900">
-                    {preference.personaName}
-                  </span>
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">
-                    {preference.preferredVariant === 'tie'
-                      ? '상황별'
-                      : `${preference.preferredVariant}안`}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600 leading-relaxed">{preference.reason}</p>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </div>
@@ -692,14 +520,8 @@ function InlineChatTab({
     setInput('')
     setIsTyping(true)
 
-    const frameContext = findReportFrame(report, selectedFrameId)
-    const fallbackFrame = frames.find((frame) => frame.id === selectedFrameId)
-    const frame = frameContext?.frame ?? fallbackFrame ?? null
-    const frameDisplayName = frameContext
-      ? frameNameFromReport(report, selectedFrameId)
-      : frame
-        ? getFrameDisplayName(frame)
-        : ''
+    const frame = frames.find((item) => item.id === selectedFrameId) ?? null
+    const frameDisplayName = frame ? getFrameDisplayName(frame) : ''
     const chatFrame = frame
       ? {
           ...frame,
@@ -750,9 +572,7 @@ function InlineChatTab({
             >
               {frames.map((frame) => (
                 <option key={frame.id} value={frame.id}>
-                  {findReportFrame(report, frame.id)
-                    ? frameNameFromReport(report, frame.id)
-                    : getFrameDisplayName(frame)}
+                  {getFrameDisplayName(frame)}
                 </option>
               ))}
             </select>
@@ -1675,7 +1495,6 @@ function ClarificationTab({
 type ReportTab =
   | 'flow'
   | 'summary'
-  | 'ab'
   | 'findings'
   | 'walkthrough'
   | 'clarify'
@@ -1686,11 +1505,7 @@ function downloadJson(report: TestReport) {
     id,
     projectName,
     createdAt,
-    testMode,
     personas,
-    variants,
-    abConfig,
-    abComparison,
     flowConfig,
     flowResult,
     flowJudgment,
@@ -1707,7 +1522,6 @@ function downloadJson(report: TestReport) {
     id,
     projectName,
     createdAt,
-    testMode,
     personas: personas.map(({ id, name, role, digitalLevel, goal, device, context }) => ({
       id,
       name,
@@ -1717,9 +1531,6 @@ function downloadJson(report: TestReport) {
       device,
       context,
     })),
-    variants,
-    abConfig,
-    abComparison,
     flowConfig,
     flowResult,
     flowJudgment,
@@ -1770,7 +1581,6 @@ export default function ReportPage({
   const tabs: { key: ReportTab; label: string }[] = [
     ...(report.flowResult ? [{ key: 'flow' as const, label: 'Flow UT' }] : []),
     { key: 'summary', label: '요약' },
-    ...(report.abComparison ? [{ key: 'ab' as const, label: 'A/B 비교' }] : []),
     { key: 'findings', label: `발견된 문제 (${findingsCount})` },
     { key: 'walkthrough', label: `클릭 시뮬레이션 (${walkCount})` },
     ...(report.flowJudgment
@@ -1846,7 +1656,6 @@ export default function ReportPage({
         <div className="mx-auto max-w-[1180px]">
         {activeTab === 'flow' && <FlowUTTab report={report} />}
         {activeTab === 'summary' && <SummaryTab report={report} />}
-        {activeTab === 'ab' && <ABComparisonTab report={report} />}
         {activeTab === 'findings' && <FindingsTab report={report} />}
         {activeTab === 'walkthrough' && <WalkthroughTab report={report} />}
         {activeTab === 'clarify' && (

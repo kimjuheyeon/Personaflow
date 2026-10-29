@@ -21,7 +21,7 @@ const STEPS = [
     description:
       '분석할 디자인을 준비하고 타깃 페르소나를 설정하세요. PersonaFlow가 테스트를 실행하고 하나의 리포트로 정리합니다.',
     features: [
-      { icon: FileImage, label: '1. Figma 또는 이미지 추가' },
+      { icon: FileImage, label: '1. Figma 화면 연결' },
       { icon: Users, label: '2. 타깃 페르소나 설정' },
       { icon: Sparkles, label: '3. AI 테스트 실행' },
       { icon: Check, label: '4. UX 리포트 확인' },
@@ -31,9 +31,9 @@ const STEPS = [
     eyebrow: '시작하기 전에',
     title: '디자인 화면만 준비하세요.',
     description:
-      'Figma 링크나 PNG/JPG 화면을 사용할 수 있습니다. 실제 AI 분석은 내 맥에서 켠 Claude 브리지(구독 계정)로 실행합니다.',
+      'Figma 프레임 링크로 화면을 가져옵니다. 실제 AI 분석은 내 맥에서 켠 Claude 브리지(구독 계정)로 실행합니다.',
     features: [
-      { icon: FileImage, label: 'Figma 링크 또는 이미지 파일' },
+      { icon: FileImage, label: 'Figma 프레임 링크' },
       { icon: Target, label: '확인하고 싶은 테스트 목표' },
       { icon: Sparkles, label: 'Claude 브리지 · 내 구독 계정 사용' },
     ],

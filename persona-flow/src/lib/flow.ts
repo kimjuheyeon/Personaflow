@@ -15,13 +15,18 @@ function orderedFrames(frames: Frame[]): Frame[] {
   )
 }
 
+/**
+ * 프로토타입 연결이 없을 때의 기본 연결.
+ * 판정기는 페르소나가 고른 요소를 이 문구와 비교하므로, 의미 없는 기본 문구를 채우지 않고
+ * 디자이너가 직접 입력하게 비워 둔다.
+ */
 function makeSequentialEdges(frames: Frame[]): FlowEdge[] {
   const ordered = orderedFrames(frames)
   return ordered.slice(0, -1).map((frame, index) => ({
     id: `edge-${frame.id}-${ordered[index + 1].id}`,
     fromFrameId: frame.id,
     toFrameId: ordered[index + 1].id,
-    actionLabel: index === ordered.length - 2 ? '과업을 완료한다' : '다음 단계로 이동한다',
+    actionLabel: '',
   }))
 }
 
@@ -101,6 +106,12 @@ export function syncFlowConfig(config: FlowTestConfig, frames: Frame[]): FlowTes
   }
 }
 
+/** 판정기가 쓰는 기대 경로를 현재 연결 기준의 최단 경로로 맞춘다. */
+export function withExpectedPath(config: FlowTestConfig): FlowTestConfig {
+  const path = findShortestPath(config)
+  return path.length >= 2 ? { ...config, expectedPathFrameIds: path } : config
+}
+
 export function getFlowFrameLabel(frames: Frame[], frameId: string): string {
   const frame = frames.find((item) => item.id === frameId)
   return frame ? getFrameDisplayName(frame) : frameId || '선택 안 됨'
@@ -134,8 +145,6 @@ export function validateFlowConfig(config: FlowTestConfig, frames: Frame[]): str
 
   const issues: string[] = []
   if (frames.length < 2) issues.push('Flow UT에는 화면이 2개 이상 필요합니다.')
-  if (!config.title.trim()) issues.push('테스트명을 입력해주세요.')
-  if (!config.scenario.trim()) issues.push('사용자 시나리오를 입력해주세요.')
   if (!config.mission.trim()) issues.push('수행 미션을 입력해주세요.')
   if (!config.entryFrameId) issues.push('진입 화면을 선택해주세요.')
   if (!config.successFrameId) issues.push('성공 화면을 선택해주세요.')
@@ -145,8 +154,9 @@ export function validateFlowConfig(config: FlowTestConfig, frames: Frame[]): str
   if (config.entryFrameId && config.successFrameId && findShortestPath(config).length === 0) {
     issues.push('진입 화면에서 성공 화면까지 연결되는 경로가 없습니다.')
   }
-  if (config.edges.some((edge) => !edge.actionLabel.trim())) {
-    issues.push('모든 화면 연결에 내부 전환 기준이 필요합니다.')
+  const unlabeledCount = config.edges.filter((edge) => !edge.actionLabel.trim()).length
+  if (unlabeledCount > 0) {
+    issues.push(`화면 연결 ${unlabeledCount}개에 '무엇을 누르면 이동하는지'를 입력해주세요.`)
   }
   return issues
 }

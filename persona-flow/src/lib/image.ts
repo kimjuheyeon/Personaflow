@@ -175,6 +175,22 @@ function detailCrops(
   })
 }
 
+/** Claude는 긴 변 1568px 또는 약 1.15MP를 넘는 이미지를 받은 뒤 스스로 축소한다. */
+const CLAUDE_MAX_EDGE = 1568
+const CLAUDE_MAX_PIXELS = 1_150_000
+/** 축소본이 원본의 이 비율 이상으로 전달되면 상세 구간 없이도 작은 요소를 읽을 수 있다. */
+const MIN_OVERVIEW_SCALE = 0.8
+
+function effectiveOverviewScale(width: number, height: number, overviewMaxDim: number): number {
+  const longest = Math.max(width, height)
+  return Math.min(
+    1,
+    overviewMaxDim / longest,
+    CLAUDE_MAX_EDGE / longest,
+    Math.sqrt(CLAUDE_MAX_PIXELS / Math.max(1, width * height))
+  )
+}
+
 export async function imageToVisionImages(
   src: File | string,
   options: VisionImageOptions = {}
@@ -203,10 +219,11 @@ export async function imageToVisionImages(
     },
   ]
 
-  const longest = Math.max(sourceWidth, sourceHeight)
-  const shortest = Math.max(1, Math.min(sourceWidth, sourceHeight))
-  const needsDetails = includeDetails && (longest > overviewMaxDim || longest / shortest > 1.6)
-  if (!needsDetails) return images
+  // 축소본이 원본 해상도에 가깝게 전달되면 상세 구간은 같은 픽셀을 다시 보내는 셈이라 생략한다.
+  const needsDetails =
+    includeDetails &&
+    effectiveOverviewScale(sourceWidth, sourceHeight, overviewMaxDim) < MIN_OVERVIEW_SCALE
+  if (!needsDetails || maxDetailImages <= 0) return images
 
   const crops = detailCrops(sourceWidth, sourceHeight, maxDetailImages, overlapRatio)
   for (let index = 0; index < crops.length; index++) {

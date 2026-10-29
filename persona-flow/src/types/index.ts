@@ -1,8 +1,6 @@
 export type SeverityLevel = 'critical' | 'warning' | 'suggestion'
 export type DigitalLevel = 'beginner' | 'intermediate' | 'expert'
 export type DeviceType = 'desktop' | 'mobile' | 'tablet'
-export type TestMode = 'single' | 'ab'
-export type VariantId = 'A' | 'B'
 export type SourceType = 'figma' | 'image'
 export type AIMode = 'demo' | 'gemini_free'
 export type StudyMode = 'flow' | 'screen'
@@ -53,18 +51,6 @@ export interface Frame {
   figmaVersionId?: string
   figmaUrl?: string
   designContext?: FrameDesignContext
-}
-
-export interface DesignVariant {
-  id: VariantId
-  name: string
-  frames: Frame[]
-}
-
-export interface ABTestConfig {
-  goal: string
-  hypothesis: string
-  criteria: string[]
 }
 
 export interface FlowEdge {
@@ -128,31 +114,6 @@ export interface TaskMetrics {
   dropoffPoint: string
   provenance?: MetricProvenance
   disclaimer?: string
-}
-
-export interface ABVariantScore {
-  variantId: VariantId
-  axisScores: AxisScore[]
-  taskMetrics: TaskMetrics
-  strengths: string[]
-  weaknesses: string[]
-}
-
-export interface PersonaPreference {
-  personaId?: string
-  personaName: string
-  preferredVariant: VariantId | 'tie'
-  reason: string
-}
-
-export interface ABComparison {
-  winner: VariantId | 'tie'
-  confidence: number
-  summary: string
-  recommendation: string
-  keyInsights: string[]
-  variantScores: ABVariantScore[]
-  personaPreferences: PersonaPreference[]
 }
 
 export interface ChatMessage {
@@ -416,12 +377,8 @@ export interface TestReport {
   sourceType?: SourceType
   figmaSource?: FigmaSource
   aiMode?: AIMode
-  testMode?: TestMode
   personas: PersonaConfig[]
   frames: Frame[]
-  variants?: DesignVariant[]
-  abConfig?: ABTestConfig
-  abComparison?: ABComparison
   flowConfig?: FlowTestConfig
   flowResult?: FlowTestResult
   /** 설계 의도와 실제 행동을 비교한 사후 판정 결과 */

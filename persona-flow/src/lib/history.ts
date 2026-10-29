@@ -1,6 +1,5 @@
 import type {
   ChatMessage,
-  DesignVariant,
   FeedbackThread,
   FigmaSource,
   FlowJudgment,
@@ -53,14 +52,6 @@ function normalizeFigmaSource(source: FigmaSource | undefined): FigmaSource | un
   }
 }
 
-function normalizeVariant(variant: DesignVariant): DesignVariant {
-  return {
-    id: variant.id,
-    name: variant.name,
-    frames: (variant.frames ?? []).map(normalizeFrame),
-  }
-}
-
 function normalizeFrameChat(frameChat: FrameChat): FrameChat {
   return {
     frameId: frameChat.frameId,
@@ -95,6 +86,11 @@ function normalizeFlowJudgment(
   }
 }
 
+/** A/B 비교 기능이 제거되기 전에 저장된 리포트는 더 이상 열 수 없으므로 목록에서 뺀다. */
+function isLegacyABReport(report: TestReport): boolean {
+  return (report as { testMode?: string }).testMode === 'ab'
+}
+
 function normalizeReport(report: TestReport): TestReport {
   return {
     ...report,
@@ -102,7 +98,6 @@ function normalizeReport(report: TestReport): TestReport {
     flowJudgment: normalizeFlowJudgment(report.flowJudgment),
     figmaSource: normalizeFigmaSource(report.figmaSource),
     frames: (report.frames ?? []).map(normalizeFrame),
-    variants: report.variants?.map(normalizeVariant),
     frameChats: (report.frameChats ?? []).map(normalizeFrameChat),
     feedbackThreads: (report.feedbackThreads ?? []).map(normalizeFeedbackThread),
   }
@@ -114,13 +109,6 @@ function removeHeavyFrameImages(report: TestReport): TestReport {
     frames: report.frames.map((frame) => ({
       ...frame,
       imageUrl: frame.imageUrl.startsWith('data:') ? '' : frame.imageUrl,
-    })),
-    variants: report.variants?.map((variant) => ({
-      ...variant,
-      frames: variant.frames.map((frame) => ({
-        ...frame,
-        imageUrl: frame.imageUrl.startsWith('data:') ? '' : frame.imageUrl,
-      })),
     })),
   }
 }
@@ -151,7 +139,7 @@ export function getTestHistory(): TestReport[] {
     if (!raw) return []
     const parsed = JSON.parse(raw) as TestReport[]
     if (!Array.isArray(parsed)) return []
-    return parsed.map(normalizeReport)
+    return parsed.filter((report) => !isLegacyABReport(report)).map(normalizeReport)
   } catch {
     return []
   }

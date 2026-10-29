@@ -9,22 +9,19 @@ import OnboardingModal from './components/OnboardingModal'
 import SNB from './components/SNB'
 import { useApiKey } from './hooks/useApiKey'
 import { createDemoReport } from './lib/ai/demo'
+import { createDemoFrames } from './lib/demoScenario'
 import { getTestHistory, saveTestReport, updateTestReportFeedback } from './lib/history'
 import { imageToBase64 } from './lib/image'
-import { createDefaultFlowConfig, syncFlowConfig } from './lib/flow'
+import { createDefaultFlowConfig, syncFlowConfig, withExpectedPath } from './lib/flow'
 import type {
-  ABTestConfig,
   AIMode,
   AppStep,
   ClarificationRequest,
-  DesignVariant,
   FeedbackThread,
   FigmaSource,
   FlowTestConfig,
   Frame,
   PersonaConfig,
-  SourceType,
-  TestMode,
   TestReport,
 } from './types'
 
@@ -34,21 +31,6 @@ const BREADCRUMB: Record<AppStep, string> = {
   persona: '테스트 설정 / 페르소나 설정',
   running: 'AI 테스트 실행',
   report: '결과 / 리포트 확인',
-}
-
-function createDefaultABConfig(): ABTestConfig {
-  return {
-    goal: '',
-    hypothesis: '',
-    criteria: ['첫인상', '이해도', '전환 유도'],
-  }
-}
-
-function createDefaultVariants(): DesignVariant[] {
-  return [
-    { id: 'A', name: 'A안', frames: [] },
-    { id: 'B', name: 'B안', frames: [] },
-  ]
 }
 
 async function prepareFrameForHistory(frame: Frame): Promise<Frame> {
@@ -93,20 +75,7 @@ async function prepareFrameForHistory(frame: Frame): Promise<Frame> {
 
 async function prepareReportForHistory(report: TestReport): Promise<TestReport> {
   const frames = await Promise.all(report.frames.map(prepareFrameForHistory))
-  const variants = report.variants
-    ? await Promise.all(
-        report.variants.map(async (variant) => ({
-          ...variant,
-          frames: await Promise.all(variant.frames.map(prepareFrameForHistory)),
-        }))
-      )
-    : undefined
-
-  return {
-    ...report,
-    frames,
-    variants,
-  }
+  return { ...report, frames }
 }
 
 function App() {
@@ -114,14 +83,10 @@ function App() {
     () => window.localStorage.getItem('personaflow:onboarding-complete') !== 'true'
   )
   const [step, setStep] = useState<AppStep>('upload')
-  const [testMode, setTestMode] = useState<TestMode>('single')
-  const [sourceType, setSourceType] = useState<SourceType>('figma')
   const [figmaUrl, setFigmaUrl] = useState('')
   const [figmaSource, setFigmaSource] = useState<FigmaSource | null>(null)
   const [aiMode, setAiMode] = useState<AIMode>('gemini_free')
   const [frames, setFrames] = useState<Frame[]>([])
-  const [variants, setVariants] = useState<DesignVariant[]>(() => createDefaultVariants())
-  const [abConfig, setAbConfig] = useState<ABTestConfig>(() => createDefaultABConfig())
   const [flowConfig, setFlowConfig] = useState<FlowTestConfig>(() =>
     createDefaultFlowConfig([])
   )
@@ -134,30 +99,25 @@ function App() {
 
   const resetAll = () => {
     setStep('upload')
-    setTestMode('single')
-    setSourceType('figma')
     setFigmaUrl('')
     setFigmaSource(null)
     setAiMode('gemini_free')
     setFrames([])
-    setVariants(createDefaultVariants())
-    setAbConfig(createDefaultABConfig())
     setFlowConfig(createDefaultFlowConfig([]))
     setPersonas([])
     setReport(null)
   }
 
   const handleUploadNext = () => {
-    if (testMode === 'ab') {
-      setStep('persona')
-      return
-    }
     setFlowConfig((current) => syncFlowConfig(current, frames))
     setStep('flow')
   }
   const handleFlowBack = () => setStep('upload')
-  const handleFlowNext = () => setStep('persona')
-  const handlePersonaBack = () => setStep(testMode === 'ab' ? 'upload' : 'flow')
+  const handleFlowNext = () => {
+    setFlowConfig((current) => withExpectedPath(current))
+    setStep('persona')
+  }
+  const handlePersonaBack = () => setStep('flow')
   const handlePersonaNext = () => setStep('running')
 
   const handleAnalysisComplete = (r: TestReport) => {
@@ -177,15 +137,10 @@ function App() {
   }
 
   const handleOpenReport = (savedReport: TestReport) => {
-    const mode = savedReport.testMode ?? 'single'
-    setTestMode(mode)
-    setSourceType(savedReport.sourceType ?? 'image')
     setFigmaSource(savedReport.figmaSource ?? null)
     setFigmaUrl(savedReport.figmaSource?.url ?? '')
     setAiMode(savedReport.aiMode ?? 'gemini_free')
     setFrames(savedReport.frames)
-    setVariants(savedReport.variants ?? createDefaultVariants())
-    setAbConfig(savedReport.abConfig ?? createDefaultABConfig())
     setFlowConfig(
       savedReport.flowConfig ??
         savedReport.flowResult?.config ??
@@ -245,14 +200,10 @@ function App() {
   const handleOpenDemo = () => {
     const demoReport = createDemoReport()
     setOnboardingOpen(false)
-    setTestMode('single')
-    setSourceType('image')
     setFigmaSource(null)
     setFigmaUrl('')
     setAiMode('demo')
     setFrames(demoReport.frames)
-    setVariants(createDefaultVariants())
-    setAbConfig(createDefaultABConfig())
     if (demoReport.flowConfig) setFlowConfig(demoReport.flowConfig)
     setPersonas(demoReport.personas)
     setReport(demoReport)
@@ -260,13 +211,24 @@ function App() {
     setStep('report')
   }
 
+  /**
+   * 개발 서버 전용: Figma 토큰 없이 샘플 화면으로 설정 흐름 전체를 점검한다.
+   * 브리지가 연결돼 있지 않으면 실행 단계는 샘플 분석으로 대신한다.
+   */
+  const handleUseSampleFrames = () => {
+    const sampleFrames = createDemoFrames()
+    setFigmaSource(null)
+    setFigmaUrl('')
+    setAiMode(hasKey ? 'gemini_free' : 'demo')
+    setFrames(sampleFrames)
+    setFlowConfig(createDefaultFlowConfig(sampleFrames))
+    setStep('flow')
+  }
+
   const rememberOnboardingSeen = () => {
     window.localStorage.setItem('personaflow:onboarding-complete', 'true')
     setOnboardingOpen(false)
   }
-
-  const activeFrames =
-    testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
 
   return (
     <div className="min-h-screen flex">
@@ -298,24 +260,17 @@ function App() {
             <UploadStep
               frames={frames}
               onFramesChange={setFrames}
-              sourceType={sourceType}
-              onSourceTypeChange={setSourceType}
               figmaUrl={figmaUrl}
               onFigmaUrlChange={setFigmaUrl}
               figmaSource={figmaSource}
               onFigmaSourceChange={setFigmaSource}
-              testMode={testMode}
-              onTestModeChange={setTestMode}
-              variants={variants}
-              onVariantsChange={setVariants}
-              abConfig={abConfig}
-              onAbConfigChange={setAbConfig}
               onNext={handleUploadNext}
               hasApiKey={hasKey}
               apiKey={apiKey}
               model={model}
               onSaveApiKey={handleSaveKey}
               onRequireApiKey={() => setKeyModalOpen(true)}
+              onUseSampleFrames={import.meta.env.DEV ? handleUseSampleFrames : undefined}
             />
           )}
           {step === 'persona' && (
@@ -324,7 +279,7 @@ function App() {
               onPersonasChange={setPersonas}
               onNext={handlePersonaNext}
               onBack={handlePersonaBack}
-              frames={activeFrames}
+              frames={frames}
               apiKey={apiKey}
               model={model}
               onRequireKey={() => setKeyModalOpen(true)}
@@ -343,11 +298,7 @@ function App() {
             <RunningStep
               personas={personas}
               frames={frames}
-              testMode={testMode}
-              variants={variants}
-              abConfig={abConfig}
               flowConfig={flowConfig}
-              sourceType={sourceType}
               figmaSource={figmaSource}
               aiMode={aiMode}
               apiKey={apiKey}
