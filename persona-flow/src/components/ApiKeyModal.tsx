@@ -10,7 +10,7 @@ import {
   SelectItem,
   SelectValue,
 } from '@/components/ui/select'
-import { MODEL_OPTIONS } from '@/lib/ai/keyStore'
+import { DEFAULT_BRIDGE_URL, MODEL_OPTIONS } from '@/lib/ai/keyStore'
 import { testApiKey } from '@/lib/ai/gemini'
 
 interface ApiKeyModalProps {
@@ -35,7 +35,7 @@ export default function ApiKeyModal({
   onClose,
   onClear,
 }: ApiKeyModalProps) {
-  const [key, setKey] = useState(initialKey)
+  const [key, setKey] = useState(initialKey || DEFAULT_BRIDGE_URL)
   const [model, setModel] = useState(currentModel)
   const [testState, setTestState] = useState<TestState>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -81,7 +81,7 @@ export default function ApiKeyModal({
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <span className="text-lg">🔑</span>
-            <h2 className="text-[17px] font-semibold text-gray-900">Gemini API 키 연결</h2>
+            <h2 className="text-[17px] font-semibold text-gray-900">Claude 브리지 연결</h2>
           </div>
           {dismissable && (
             <button
@@ -96,29 +96,19 @@ export default function ApiKeyModal({
         {/* 본문 */}
         <div className="px-6 py-5 space-y-5">
           <p className="text-xs text-gray-500 leading-relaxed">
-            AI 시안 분석에는 Google Gemini API 키가 필요합니다. 키는 이 브라우저에만 저장되며
-            서버로 전송되지 않습니다.
+            AI 시안 분석은 내 맥에서 실행 중인 브리지를 통해 Claude 구독 계정으로 처리합니다.
+            터미널에서 persona-flow 폴더로 이동해 <code className="font-mono">npm run bridge</code>를 먼저 실행하세요.
           </p>
 
-          <a
-            href="https://aistudio.google.com/apikey"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 underline"
-          >
-            무료 API 키 발급받기 (Google AI Studio) →
-          </a>
-
           <div className="space-y-1.5">
-            <Label className="text-xs">API 키</Label>
+            <Label className="text-xs">브리지 주소</Label>
             <Input
-              type="password"
               value={key}
               onChange={(e) => {
                 setKey(e.target.value)
                 setTestState('idle')
               }}
-              placeholder="AIza..."
+              placeholder={DEFAULT_BRIDGE_URL}
               className="h-9 text-sm font-mono"
               autoFocus
             />
@@ -144,7 +134,7 @@ export default function ApiKeyModal({
           {testState === 'ok' && (
             <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
               <Check className="w-3.5 h-3.5" />
-              연결 성공! 키가 정상 동작합니다.
+              연결 성공! Claude가 정상 응답합니다.
             </div>
           )}
           {testState === 'error' && (
@@ -162,7 +152,7 @@ export default function ApiKeyModal({
                 onClick={handleClear}
                 className="text-xs text-gray-400 hover:text-red-500 transition-colors"
               >
-                키 삭제
+                연결 해제
               </button>
             )}
           </div>

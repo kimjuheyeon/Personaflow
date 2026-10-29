@@ -151,7 +151,7 @@ export default function RunningStep({
 
   const run = useCallback(async () => {
     if (aiMode === 'gemini_free' && !apiKey) {
-      setError('Gemini API 키가 필요합니다. 키를 설정한 뒤 다시 시도하세요.')
+      setError('Claude 브리지 연결이 필요합니다. 브리지를 켜고 연결한 뒤 다시 시도하세요.')
       return
     }
 
@@ -459,10 +459,10 @@ export default function RunningStep({
 
         <p className="text-xs text-gray-400 text-center">
           {testMode === 'ab'
-            ? 'Gemini가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
+            ? 'Claude가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
             : isFlowTest
-            ? 'Gemini가 설정된 행동 연결 안에서 각 페르소나의 미션 수행 경로를 평가합니다'
-            : 'Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
+            ? 'Claude가 설정된 행동 연결 안에서 각 페르소나의 미션 수행 경로를 평가합니다'
+            : 'Claude가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
         </p>
       </div>
     </div>

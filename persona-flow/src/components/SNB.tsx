@@ -297,7 +297,7 @@ export default function SNB({
           />
           <span className="min-w-0">
             <span className="block truncate font-medium">
-              {hasKey ? '실제 AI 연결됨' : 'Gemini 키 미설정'}
+              {hasKey ? '실제 AI 연결됨' : 'Claude 브리지 미연결'}
             </span>
             {hasKey && (
               <span className="mt-0.5 block truncate text-[10px] text-slate-400">

@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { importFigmaFrames } from '@/lib/figmaApi'
 import { testApiKey } from '@/lib/ai/gemini'
-import { MODEL_OPTIONS } from '@/lib/ai/keyStore'
+import { DEFAULT_BRIDGE_URL, MODEL_OPTIONS } from '@/lib/ai/keyStore'
 import {
   clearStoredFigmaToken,
   getStoredFigmaToken,
@@ -228,7 +228,7 @@ export default function UploadStep({
   )
   const [editingFigmaLinks, setEditingFigmaLinks] = useState(() => !figmaSource)
   const [figmaImporting, setFigmaImporting] = useState(false)
-  const [geminiKeyInput, setGeminiKeyInput] = useState(apiKey)
+  const [geminiKeyInput, setGeminiKeyInput] = useState(apiKey || DEFAULT_BRIDGE_URL)
   const [geminiModel, setGeminiModel] = useState(model)
   const [geminiTesting, setGeminiTesting] = useState(false)
   const [geminiError, setGeminiError] = useState<string | null>(null)
@@ -464,7 +464,7 @@ export default function UploadStep({
       await testApiKey(geminiKeyInput.trim(), geminiModel)
       onSaveApiKey(geminiKeyInput.trim(), geminiModel)
     } catch (error) {
-      setGeminiError(error instanceof Error ? error.message : 'Gemini 연결 테스트에 실패했습니다.')
+      setGeminiError(error instanceof Error ? error.message : '브리지 연결 테스트에 실패했습니다.')
     } finally {
       setGeminiTesting(false)
     }
@@ -848,7 +848,7 @@ export default function UploadStep({
         </span>
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
-        Gemini 무료 API 키와 실제 화면 이미지로 페르소나 테스트를 실행합니다.
+        Claude 구독(로컬 브리지)과 실제 화면 이미지로 페르소나 테스트를 실행합니다.
       </p>
     </div>
   )
@@ -1190,36 +1190,30 @@ export default function UploadStep({
                         {hasApiKey ? <Check className="h-4 w-4" /> : '1'}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-[15px] font-semibold text-gray-900">Gemini AI 연결</p>
-                        <p className="mt-1 text-xs text-gray-500">AI 페르소나 분석에 사용할 무료 Gemini API 키를 연결합니다.</p>
+                        <p className="text-[15px] font-semibold text-gray-900">Claude 브리지 연결</p>
+                        <p className="mt-1 text-xs text-gray-500">내 맥에서 실행 중인 브리지를 통해 Claude 구독 계정으로 분석합니다.</p>
 
                         {hasApiKey ? (
                           <div className="mt-4 flex items-center justify-between rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
                             <div>
-                              <p className="text-sm font-medium text-gray-800">Gemini 연결 완료</p>
+                              <p className="text-sm font-medium text-gray-800">Claude 브리지 연결 완료</p>
                               <p className="mt-1 text-xs text-gray-500">{MODEL_OPTIONS.find((option) => option.id === model)?.label ?? model}</p>
                             </div>
-                            <button type="button" onClick={onRequireApiKey} className="text-xs font-medium text-blue-500 hover:text-blue-400">API 키 변경</button>
+                            <button type="button" onClick={onRequireApiKey} className="text-xs font-medium text-blue-500 hover:text-blue-400">연결 변경</button>
                           </div>
                         ) : (
                           <div className="mt-4 space-y-3">
-                            <a
-                              href="https://aistudio.google.com/apikey"
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center text-xs font-medium text-blue-500 hover:text-blue-400"
-                            >
-                              Google AI Studio에서 무료 API 키 발급받기 →
-                            </a>
+                            <p className="text-xs leading-relaxed text-gray-500">
+                              터미널에서 persona-flow 폴더로 이동해 <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[11px] text-gray-800">npm run bridge</code>를 실행한 뒤 연결 테스트를 누르세요.
+                            </p>
                             <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_260px_auto]">
                               <Input
-                                type="password"
                                 value={geminiKeyInput}
                                 onChange={(event) => {
                                   setGeminiKeyInput(event.target.value)
                                   setGeminiError(null)
                                 }}
-                                placeholder="Gemini API 키 (AIza...)"
+                                placeholder={DEFAULT_BRIDGE_URL}
                                 className="h-11 font-mono text-sm"
                               />
                               <Select value={geminiModel} onValueChange={setGeminiModel}>
@@ -1234,7 +1228,7 @@ export default function UploadStep({
                                 {geminiTesting ? <><Loader2 className="h-4 w-4 animate-spin" />연결 중</> : '연결 테스트'}
                               </Button>
                             </div>
-                            <p className="text-[11px] leading-relaxed text-gray-500">키는 현재 브라우저에만 저장되며 PersonaFlow 서버에는 저장되지 않습니다.</p>
+                            <p className="text-[11px] leading-relaxed text-gray-500">Claude 호출은 내 맥의 브리지에서만 처리되며, 구독 로그인 정보는 이 컴퓨터 밖으로 나가지 않습니다.</p>
                             {geminiError && <p className="text-xs text-red-600">{geminiError}</p>}
                           </div>
                         )}
@@ -1263,7 +1257,7 @@ export default function UploadStep({
                         </div>
 
                         {!hasApiKey ? (
-                          <p className="mt-4 text-xs text-gray-500">먼저 Gemini AI 연결을 완료하세요.</p>
+                          <p className="mt-4 text-xs text-gray-500">먼저 Claude 브리지 연결을 완료하세요.</p>
                         ) : hasConnectedFigmaSource && !editingFigmaLinks ? (
                           <div className="mt-4 rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
                             <p className="truncate text-sm font-medium text-gray-800">{figmaConnectionLabel}</p>
@@ -1330,7 +1324,7 @@ export default function UploadStep({
                         <p className="mt-1 text-xs text-gray-500">화면을 읽기 위한 개인 액세스 토큰을 연결합니다.</p>
 
                         {!figmaLinkStepComplete ? (
-                          <p className="mt-4 text-xs text-gray-500">먼저 Gemini 연결과 Figma 프레임 링크 확인을 완료하세요.</p>
+                          <p className="mt-4 text-xs text-gray-500">먼저 Claude 브리지 연결과 Figma 프레임 링크 확인을 완료하세요.</p>
                         ) : figmaAccessStepComplete ? (
                           <div className="mt-4 flex items-center justify-between rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
                             <div>
@@ -1611,7 +1605,7 @@ export default function UploadStep({
                     {hasApiKey ? <Check className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" />}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-gray-800">Gemini API 키</p>
+                    <p className="text-xs font-medium text-gray-800">Claude 브리지</p>
                     <p className="mt-0.5 text-[11px] text-gray-500">
                       {hasApiKey ? '연결 완료' : 'AI 테스트 실행 전에 필요합니다'}
                     </p>

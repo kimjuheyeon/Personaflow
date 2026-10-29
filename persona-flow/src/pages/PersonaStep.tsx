@@ -195,7 +195,7 @@ export default function PersonaStep({
               </span>
               <p className="mt-5 text-[17px] font-semibold text-gray-800">AI가 적합한 페르소나를 제안합니다</p>
               <p className="mt-2 text-sm text-gray-500">
-                가져온 화면 이미지를 Gemini가 보고 사용자 유형을 제안합니다
+                가져온 화면 이미지를 Claude가 보고 사용자 유형을 제안합니다
               </p>
               {error && (
                 <p className="text-xs text-red-600 max-w-md mx-auto leading-relaxed px-4">{error}</p>

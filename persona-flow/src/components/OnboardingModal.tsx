@@ -31,11 +31,11 @@ const STEPS = [
     eyebrow: '시작하기 전에',
     title: '디자인 화면만 준비하세요.',
     description:
-      'Figma 링크나 PNG/JPG 화면을 사용할 수 있습니다. 실제 AI 분석을 실행할 때는 무료 Gemini API 키가 필요합니다.',
+      'Figma 링크나 PNG/JPG 화면을 사용할 수 있습니다. 실제 AI 분석은 내 맥에서 켠 Claude 브리지(구독 계정)로 실행합니다.',
     features: [
       { icon: FileImage, label: 'Figma 링크 또는 이미지 파일' },
       { icon: Target, label: '확인하고 싶은 테스트 목표' },
-      { icon: Sparkles, label: 'Gemini API 키 · 브라우저에만 저장' },
+      { icon: Sparkles, label: 'Claude 브리지 · 내 구독 계정 사용' },
     ],
   },
 ] as const

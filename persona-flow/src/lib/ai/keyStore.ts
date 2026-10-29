@@ -1,12 +1,13 @@
 /**
- * Gemini API 키 / 모델 설정을 브라우저 localStorage에 보관한다.
- * (개인용·데모 목적. 추후 유료 전환 시 백엔드 프록시로 이전 권장)
+ * 로컬 Claude 브리지 주소 / 모델 설정을 브라우저 localStorage에 보관한다.
+ * 연결 테스트를 통과한 주소만 저장되므로, 값이 있으면 "연결됨"으로 본다.
  */
 
-const KEY_STORAGE = 'personaflow_gemini_key'
-const MODEL_STORAGE = 'personaflow_gemini_model'
+const KEY_STORAGE = 'personaflow_bridge_url'
+const MODEL_STORAGE = 'personaflow_claude_model'
 
-export const DEFAULT_MODEL = 'gemini-2.5-flash'
+export const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:8787'
+export const DEFAULT_MODEL = 'sonnet'
 
 export interface ModelOption {
   id: string
@@ -14,12 +15,11 @@ export interface ModelOption {
   note: string
 }
 
-/** 무료 티어에서 사용 가능한 비전(이미지) 지원 모델 */
+/** Claude Code 모델 별칭. 항상 해당 등급의 최신 모델로 연결된다. */
 export const MODEL_OPTIONS: ModelOption[] = [
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', note: '똑똑함 · 무료 한도 있음 (권장)' },
-  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', note: '가볍고 무료 한도 넉넉' },
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', note: '빠름 · 키에 따라 한도 0일 수 있음' },
-  { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', note: '가장 가벼움' },
+  { id: 'sonnet', label: 'Claude Sonnet', note: '균형 · 이미지 판독 우수 (권장)' },
+  { id: 'opus', label: 'Claude Opus', note: '가장 꼼꼼함 · 느리고 사용량 많음' },
+  { id: 'haiku', label: 'Claude Haiku', note: '가장 빠름 · 사용량 적음' },
 ]
 
 export function getStoredKey(): string {
@@ -48,7 +48,8 @@ export function clearStoredKey(): void {
 
 export function getStoredModel(): string {
   try {
-    return localStorage.getItem(MODEL_STORAGE) || DEFAULT_MODEL
+    const stored = localStorage.getItem(MODEL_STORAGE)
+    return MODEL_OPTIONS.some((option) => option.id === stored) ? (stored as string) : DEFAULT_MODEL
   } catch {
     return DEFAULT_MODEL
   }

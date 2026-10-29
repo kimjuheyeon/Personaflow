@@ -1,6 +1,7 @@
 /**
- * Google Gemini API 클라이언트 (브라우저 직접 호출 / BYOK).
- * 무료 티어: https://aistudio.google.com/apikey 에서 키 발급.
+ * AI 분석 클라이언트.
+ * 내 맥에서 실행 중인 로컬 브리지(bridge/server.mjs)를 거쳐 Claude 구독 계정으로 호출한다.
+ * 프롬프트·스키마는 Gemini 시절 형식을 유지하고, 요청 직전에 Claude 형식으로 바꾼다.
  */
 
 import type {
@@ -53,8 +54,6 @@ import {
   type RetryNotice,
 } from './retry'
 
-const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
-
 type Part =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } }
@@ -65,11 +64,13 @@ interface Content {
 }
 
 interface GenerateOptions {
+  /** 로컬 브리지 주소. 기존 API 키 저장소를 그대로 재사용한다. */
   apiKey: string
   model: string
   systemInstruction?: string
   contents: Content[]
   responseSchema?: unknown
+  /** Claude는 temperature를 받지 않으므로 전달하지 않는다. */
   temperature?: number
   signal?: AbortSignal
   /** 재시도로 대기에 들어갈 때 호출된다. 진행 화면에 남은 시간을 보여주기 위한 것 */
@@ -89,29 +90,61 @@ class TransientGeminiError extends Error {
   }
 }
 
-async function requestOnce(opts: GenerateOptions): Promise<string> {
-  const url = `${API_BASE}/${opts.model}:generateContent?key=${encodeURIComponent(
-    opts.apiKey
-  )}`
+type ClaudeBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
 
-  const hasMedia = opts.contents.some((content) =>
-    content.parts.some((part) => 'inlineData' in part)
-  )
-  const body: Record<string, unknown> = {
-    contents: opts.contents,
-    generationConfig: {
-      temperature: opts.temperature ?? 0.7,
-      ...(hasMedia ? { mediaResolution: 'MEDIA_RESOLUTION_HIGH' } : {}),
-      ...(opts.responseSchema
-        ? {
-            responseMimeType: 'application/json',
-            responseSchema: opts.responseSchema,
-          }
-        : {}),
-    },
+/**
+ * 브리지는 한 번에 사용자 메시지 하나만 받는다.
+ * 여러 턴(채팅 기록)은 화자 표시를 붙여 하나의 메시지로 펼친다. 이미지는 순서대로 유지된다.
+ */
+function toClaudeContent(contents: Content[]): ClaudeBlock[] {
+  const multiTurn = contents.length > 1
+  const blocks: ClaudeBlock[] = []
+  for (const content of contents) {
+    if (multiTurn) {
+      blocks.push({ type: 'text', text: content.role === 'user' ? '[사용자]' : '[나]' })
+    }
+    for (const part of content.parts) {
+      if ('inlineData' in part) {
+        blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: part.inlineData.mimeType, data: part.inlineData.data },
+        })
+      } else if (part.text) {
+        blocks.push({ type: 'text', text: part.text })
+      }
+    }
   }
-  if (opts.systemInstruction) {
-    body.systemInstruction = { parts: [{ text: opts.systemInstruction }] }
+  if (multiTurn) {
+    blocks.push({ type: 'text', text: '위 대화에 이어서, 마지막 [사용자] 메시지에 [나]로서 답하세요.' })
+  }
+  return blocks
+}
+
+/** Gemini 스키마(type: 'OBJECT' 등 대문자)를 JSON Schema(소문자)로 바꾼다. */
+function toJsonSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(toJsonSchema)
+  if (!schema || typeof schema !== 'object') return schema
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === 'type' && typeof value === 'string') out.type = value.toLowerCase()
+    else if (key === 'properties' && value && typeof value === 'object') {
+      out.properties = Object.fromEntries(
+        Object.entries(value).map(([name, child]) => [name, toJsonSchema(child)])
+      )
+    } else out[key] = toJsonSchema(value)
+  }
+  return out
+}
+
+async function requestOnce(opts: GenerateOptions): Promise<string> {
+  const url = `${opts.apiKey.replace(/\/+$/, '')}/generate`
+  const body = {
+    model: opts.model,
+    system: opts.systemInstruction,
+    content: toClaudeContent(opts.contents),
+    schema: opts.responseSchema ? toJsonSchema(opts.responseSchema) : undefined,
   }
 
   let res: Response
@@ -124,8 +157,10 @@ async function requestOnce(opts: GenerateOptions): Promise<string> {
     })
   } catch (error) {
     if (isAbortError(error)) throw new AnalysisAbortedError()
-    // 일시적 네트워크 오류일 수 있으므로 재시도 대상으로 던진다.
-    throw new TransientGeminiError('네트워크 오류로 Gemini에 연결할 수 없습니다.', null)
+    // 브리지가 꺼져 있으면 재시도해도 소용없다.
+    throw new PermanentAnalysisError(
+      '로컬 브리지에 연결할 수 없습니다. 터미널에서 `npm run bridge`가 실행 중인지, 브라우저의 로컬 네트워크 접근을 허용했는지 확인하세요.'
+    )
   }
 
   if (!res.ok) {
@@ -133,49 +168,40 @@ async function requestOnce(opts: GenerateOptions): Promise<string> {
     let detail = ''
     try {
       parsed = await res.json()
-      detail = (parsed as { error?: { message?: string } })?.error?.message ?? ''
+      detail = (parsed as { error?: string })?.error ?? ''
     } catch {
       /* 본문이 JSON이 아닐 수 있다 */
+    }
+
+    if (res.status === 401) {
+      throw new PermanentAnalysisError(
+        `Claude 로그인이 필요합니다. 터미널에서 \`claude auth login\`을 실행한 뒤 브리지를 다시 켜주세요.${detail ? ` (${detail})` : ''}`
+      )
     }
 
     if (isRetriableStatus(res.status)) {
       const serverDelay = parseServerRetryDelayMs(parsed, res.headers.get('retry-after'))
       throw new TransientGeminiError(
         res.status === 429
-          ? `무료 사용 한도에 걸렸습니다.${detail ? ` (${detail})` : ''}`
-          : `Gemini 서버가 일시적으로 응답하지 못했습니다. (HTTP ${res.status})`,
+          ? `Claude 구독 사용 한도에 걸렸습니다.${detail ? ` (${detail})` : ''}`
+          : `Claude 응답에 실패했습니다.${detail ? ` (${detail})` : ` (HTTP ${res.status})`}`,
         serverDelay
       )
     }
 
-    const base = detail || `Gemini 요청 실패 (HTTP ${res.status})`
-    throw new PermanentAnalysisError(
-      res.status === 400 || res.status === 401 || res.status === 403
-        ? `API 키가 올바르지 않거나 요청이 거부되었습니다. (${base})`
-        : base
-    )
+    throw new PermanentAnalysisError(detail || `Claude 요청 실패 (HTTP ${res.status})`)
   }
 
-  const data = await res.json()
-  const blockReason = data?.promptFeedback?.blockReason
-  if (blockReason) {
-    throw new PermanentAnalysisError(
-      `요청이 안전 필터에 의해 차단되었습니다. (${blockReason})`
-    )
-  }
-  const parts = data?.candidates?.[0]?.content?.parts ?? []
-  const text = parts
-    .map((p: { text?: string }) => p.text ?? '')
-    .join('')
-    .trim()
+  const data = (await res.json()) as { text?: string }
+  const text = (data.text ?? '').trim()
   // 빈 응답은 재시도로 풀리는 경우가 많다.
-  if (!text) throw new TransientGeminiError('Gemini가 빈 응답을 반환했습니다.', null)
+  if (!text) throw new TransientGeminiError('Claude가 빈 응답을 반환했습니다.', null)
   return text
 }
 
 async function generateContent(opts: GenerateOptions): Promise<string> {
   const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
-  let lastMessage = 'Gemini 요청에 실패했습니다.'
+  let lastMessage = 'Claude 요청에 실패했습니다.'
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     throwIfAborted(opts.signal)

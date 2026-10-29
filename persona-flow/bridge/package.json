@@ -1,0 +1,16 @@
+{
+  "name": "persona-flow-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Claude 구독(로컬 Claude Code 로그인)으로 PersonaFlow 분석을 처리하는 로컬 브리지",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.310"
+  },
+  "engines": {
+    "node": ">=22.9"
+  }
+}
