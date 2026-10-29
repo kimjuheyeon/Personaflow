@@ -13,7 +13,8 @@ import {
   PlayCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { MODEL_OPTIONS } from '@/lib/ai/keyStore'
+import { BACKEND_LABEL, MODEL_OPTIONS } from '@/lib/ai/keyStore'
+import type { ClaudeBackend } from '@/lib/ai/claude'
 import { cn } from '@/lib/utils'
 import type { AppStep, TestReport } from '@/types'
 
@@ -30,6 +31,8 @@ interface SNBProps {
   currentStep: AppStep
   onReset: () => void
   hasKey: boolean
+  /** 서버가 Claude를 호출하는 방식. 아직 확인 전이면 null */
+  backend: ClaudeBackend | null
   model: string
   onOpenKey: () => void
   history: TestReport[]
@@ -103,6 +106,7 @@ export default function SNB({
   currentStep,
   onReset,
   hasKey,
+  backend,
   model,
   onOpenKey,
   history,
@@ -297,11 +301,11 @@ export default function SNB({
           />
           <span className="min-w-0">
             <span className="block truncate font-medium">
-              {hasKey ? '실제 AI 연결됨' : 'Gemini 키 미설정'}
+              {hasKey ? 'Claude 연결됨' : 'Claude 연결 필요'}
             </span>
             {hasKey && (
               <span className="mt-0.5 block truncate text-[10px] text-slate-400">
-                {modelLabel}
+                {backend ? `${BACKEND_LABEL[backend]} · ${modelLabel}` : modelLabel}
               </span>
             )}
           </span>

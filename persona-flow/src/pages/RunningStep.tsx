@@ -3,7 +3,7 @@ import { Loader2, Check, Circle, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { analyzeABDesignDemo, analyzeDesignDemo, analyzeFlowDesignDemo } from '@/lib/ai/demo'
-import { analyzeABDesign, analyzeDesign, analyzeFlowDesign } from '@/lib/ai/gemini'
+import { analyzeABDesign, analyzeDesign, analyzeFlowDesign } from '@/lib/ai/claude'
 import { formatWait, isAbortError } from '@/lib/ai/retry'
 import { getFrameProjectLabel } from '@/lib/frameNaming'
 import type {
@@ -33,7 +33,8 @@ interface RunningStepProps {
   sourceType: SourceType
   figmaSource: FigmaSource | null
   aiMode: AIMode
-  apiKey: string
+  accessCode: string
+  aiReady: boolean
   model: string
   onComplete: (report: TestReport) => void
   onBack: () => void
@@ -123,7 +124,8 @@ export default function RunningStep({
   sourceType,
   figmaSource,
   aiMode,
-  apiKey,
+  accessCode,
+  aiReady,
   model,
   onComplete,
   onBack,
@@ -149,16 +151,26 @@ export default function RunningStep({
   const retryNotice = progressState?.retry ?? null
   const resumedFromCheckpoint = Boolean(checkpointRef.current.observations)
 
+  /**
+   * 연결 상태(접근 코드, 서버 상태)는 실행을 시작할 때의 값만 쓴다.
+   * run의 의존성에 넣으면 분석 도중 설정 모달에서 상태가 바뀔 때 진행 중인 분석이 취소되고 처음부터 다시 돈다.
+   */
+  const connectionRef = useRef({ accessCode, aiReady })
+  useEffect(() => {
+    connectionRef.current = { accessCode, aiReady }
+  }, [accessCode, aiReady])
+
   const run = useCallback(async () => {
-    if (aiMode === 'gemini_free' && !apiKey) {
-      setError('Gemini API 키가 필요합니다. 키를 설정한 뒤 다시 시도하세요.')
+    const connection = connectionRef.current
+    if (aiMode === 'claude' && !connection.aiReady) {
+      setError('Claude 연결이 필요합니다. 연결 설정을 확인한 뒤 다시 시도하세요.')
       return
     }
 
     const targetFrames =
       testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
     if (
-      aiMode === 'gemini_free' &&
+      aiMode === 'claude' &&
       (targetFrames.length === 0 || !targetFrames.every(hasFrameImage))
     ) {
       setError(
@@ -189,14 +201,14 @@ export default function RunningStep({
         testMode === 'ab'
           ? aiMode === 'demo'
             ? await analyzeABDesignDemo(variants, personas, abConfig)
-            : await analyzeABDesign(apiKey, model, variants, personas, abConfig, context)
+            : await analyzeABDesign(connection.accessCode, model, variants, personas, abConfig, context)
           : isFlowTest
           ? aiMode === 'demo'
             ? await analyzeFlowDesignDemo(frames, personas, flowConfig)
-            : await analyzeFlowDesign(apiKey, model, frames, personas, flowConfig, context)
+            : await analyzeFlowDesign(connection.accessCode, model, frames, personas, flowConfig, context)
           : aiMode === 'demo'
           ? await analyzeDesignDemo(frames, personas, sourceType, figmaSource)
-          : await analyzeDesign(apiKey, model, frames, personas, context)
+          : await analyzeDesign(connection.accessCode, model, frames, personas, context)
       if (controller.signal.aborted) return
 
       const reportFrames = targetFrames
@@ -246,7 +258,6 @@ export default function RunningStep({
   }, [
     abConfig,
     aiMode,
-    apiKey,
     figmaSource,
     flowConfig,
     frames,
@@ -294,7 +305,7 @@ export default function RunningStep({
               페르소나로 돌아가기
             </Button>
             <Button variant="outline" size="sm" onClick={onRequireKey}>
-              키 변경
+              연결 설정
             </Button>
             <Button size="sm" onClick={run}>
               {resumedFromCheckpoint ? '이어서 다시 시도' : '다시 시도'}
@@ -459,10 +470,10 @@ export default function RunningStep({
 
         <p className="text-xs text-gray-400 text-center">
           {testMode === 'ab'
-            ? 'Gemini가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
+            ? 'Claude가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
             : isFlowTest
-            ? 'Gemini가 설정된 행동 연결 안에서 각 페르소나의 미션 수행 경로를 평가합니다'
-            : 'Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
+            ? 'Claude가 설정된 행동 연결 안에서 각 페르소나의 미션 수행 경로를 평가합니다'
+            : 'Claude가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
         </p>
       </div>
     </div>

@@ -1,0 +1,14 @@
+{
+  "name": "personaflow",
+  "private": true,
+  "type": "module",
+  "description": "PersonaFlow — 루트에는 서버 함수(api/, server/) 의존성과 실행 스크립트만 둔다",
+  "scripts": {
+    "setup": "npm install && npm --prefix persona-flow install",
+    "dev": "npm --prefix persona-flow run dev",
+    "build": "npm --prefix persona-flow run build"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0"
+  }
+}
