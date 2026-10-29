@@ -35,7 +35,13 @@ function claudeApiPlugin(): Plugin {
         `  ➜  Claude: ${backend.name === 'api' ? '회사 API 키 (ANTHROPIC_API_KEY)' : '내 Claude 구독 (Claude Code 로그인)'}`
       )
       server.middlewares.use('/api/claude', (req, res) => {
-        void handler(req, res)
+        handler(req, res).catch((error: unknown) => {
+          server.config.logger.error(`/api/claude: ${String(error)}`)
+          if (!res.writableEnded) {
+            res.statusCode = 500
+            res.end()
+          }
+        })
       })
     },
   }

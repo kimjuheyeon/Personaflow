@@ -63,7 +63,13 @@ function runCli(args, { input, signal, timeoutMs }) {
     }
     const timer = setTimeout(() => {
       child.kill()
-      finish(reject, new ClaudeBackendError(504, 'Claude Code 응답 시간이 초과되었습니다.'))
+      finish(
+        reject,
+        new ClaudeBackendError(
+          504,
+          'Claude Code 응답 시간(10분)이 초과되었습니다. 화면 수를 줄이거나 더 빠른 모델로 다시 시도하세요.'
+        )
+      )
     }, timeoutMs)
     signal?.addEventListener('abort', onAbort, { once: true })
 
@@ -82,6 +88,8 @@ function runCli(args, { input, signal, timeoutMs }) {
     })
     child.on('close', (code) => finish(resolve, { code, stdout, stderr }))
 
+    // CLI가 입력을 읽기 전에 끝나면(미설치, 미로그인 등) 쓰기가 EPIPE로 실패한다. 결과는 close에서 처리한다.
+    child.stdin.on('error', () => {})
     if (input !== undefined) child.stdin.end(input)
     else child.stdin.end()
   })
@@ -96,10 +104,13 @@ async function readAuthStatus() {
   }
 }
 
-/** CLI 결과에서 사람에게 보여줄 오류를 고른다. 구독 한도는 재시도해도 풀리지 않는다. */
+/**
+ * CLI 결과에서 사람에게 보여줄 오류를 고른다.
+ * 구독 사용 한도는 몇 시간 뒤 초기화되므로 재시도하지 않고, 일시적인 429/5xx만 재시도한다.
+ */
 function resultError(result, stderr) {
   const message = String(result?.result ?? result?.errors?.join?.(' ') ?? stderr ?? '').trim()
-  if (/usage limit|limit reached|rate limit/i.test(message)) {
+  if (/usage limit|limit reached|hit your limit/i.test(message)) {
     return new ClaudeBackendError(
       429,
       'Claude 구독 사용 한도에 도달했습니다. 한도가 초기화된 뒤 다시 시도하세요.',

@@ -148,6 +148,17 @@ async function callProxy<T>(
   }
 
   const detail = data?.error ?? ''
+  // 서버가 이미지를 잃어버렸다(로컬 서버 재시작, 업로드 만료). 캐시를 비우고 다시 올린다.
+  if (data?.reason === 'image_expired') {
+    uploadedImages.clear()
+    throw new TransientClaudeError(detail || '화면 이미지를 다시 올립니다.', 0)
+  }
+  if (res.status === 504) {
+    throw new PermanentAnalysisError(
+      detail ||
+        '분석이 서버 시간 제한을 넘었습니다. 화면 수를 줄이거나 Sonnet 모델로 다시 시도하세요.'
+    )
+  }
   if (isRetriableStatus(res.status) && !data?.permanent) {
     throw new TransientClaudeError(
       detail || `AI 서버가 일시적으로 응답하지 못했습니다. (HTTP ${res.status})`,

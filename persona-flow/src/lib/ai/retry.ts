@@ -42,9 +42,12 @@ export interface RetryOptions {
 
 export const DEFAULT_MAX_ATTEMPTS = 4
 
-/** 재시도할 가치가 있는 HTTP 상태. 529는 Claude 서버 과부하 */
+/**
+ * 재시도할 가치가 있는 HTTP 상태. 529는 Claude 서버 과부하.
+ * 504(시간 초과)는 같은 긴 요청을 다시 보내도 또 초과하므로 재시도하지 않는다.
+ */
 export function isRetriableStatus(status: number): boolean {
-  return [429, 500, 502, 503, 504, 529].includes(status)
+  return [429, 500, 502, 503, 529].includes(status)
 }
 
 /** 서버가 알려준 Retry-After(초 또는 HTTP 날짜)가 있으면 그 시간을 우선한다. */

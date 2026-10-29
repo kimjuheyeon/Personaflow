@@ -117,6 +117,15 @@ export function createApiBackend() {
         )
         message = await stream.finalMessage()
       } catch (error) {
+        // 업로드한 이미지가 만료되면(24시간) 브라우저가 다시 올리도록 알린다.
+        if (
+          error instanceof Anthropic.NotFoundError ||
+          (error instanceof Anthropic.BadRequestError && /file/i.test(error.message))
+        ) {
+          throw new ClaudeBackendError(409, '화면 이미지가 만료되었습니다. 다시 시도해주세요.', {
+            reason: 'image_expired',
+          })
+        }
         throw toBackendError(error)
       }
 

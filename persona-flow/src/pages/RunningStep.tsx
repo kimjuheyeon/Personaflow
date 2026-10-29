@@ -151,8 +151,18 @@ export default function RunningStep({
   const retryNotice = progressState?.retry ?? null
   const resumedFromCheckpoint = Boolean(checkpointRef.current.observations)
 
+  /**
+   * 연결 상태(접근 코드, 서버 상태)는 실행을 시작할 때의 값만 쓴다.
+   * run의 의존성에 넣으면 분석 도중 설정 모달에서 상태가 바뀔 때 진행 중인 분석이 취소되고 처음부터 다시 돈다.
+   */
+  const connectionRef = useRef({ accessCode, aiReady })
+  useEffect(() => {
+    connectionRef.current = { accessCode, aiReady }
+  }, [accessCode, aiReady])
+
   const run = useCallback(async () => {
-    if (aiMode === 'claude' && !aiReady) {
+    const connection = connectionRef.current
+    if (aiMode === 'claude' && !connection.aiReady) {
       setError('Claude 연결이 필요합니다. 연결 설정을 확인한 뒤 다시 시도하세요.')
       return
     }
@@ -191,14 +201,14 @@ export default function RunningStep({
         testMode === 'ab'
           ? aiMode === 'demo'
             ? await analyzeABDesignDemo(variants, personas, abConfig)
-            : await analyzeABDesign(accessCode, model, variants, personas, abConfig, context)
+            : await analyzeABDesign(connection.accessCode, model, variants, personas, abConfig, context)
           : isFlowTest
           ? aiMode === 'demo'
             ? await analyzeFlowDesignDemo(frames, personas, flowConfig)
-            : await analyzeFlowDesign(accessCode, model, frames, personas, flowConfig, context)
+            : await analyzeFlowDesign(connection.accessCode, model, frames, personas, flowConfig, context)
           : aiMode === 'demo'
           ? await analyzeDesignDemo(frames, personas, sourceType, figmaSource)
-          : await analyzeDesign(accessCode, model, frames, personas, context)
+          : await analyzeDesign(connection.accessCode, model, frames, personas, context)
       if (controller.signal.aborted) return
 
       const reportFrames = targetFrames
@@ -248,8 +258,6 @@ export default function RunningStep({
   }, [
     abConfig,
     aiMode,
-    accessCode,
-    aiReady,
     figmaSource,
     flowConfig,
     frames,

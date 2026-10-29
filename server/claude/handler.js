@@ -13,6 +13,8 @@
  * - generate    메시지 생성. schema가 있으면 구조화 출력(JSON)으로 받는다
  */
 
+import { createHash, timingSafeEqual } from 'node:crypto'
+
 export const ALLOWED_MODELS = new Set(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
 const ALLOWED_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -54,10 +56,26 @@ async function readBody(req) {
   }
 }
 
+function digest(value) {
+  return createHash('sha256').update(String(value)).digest()
+}
+
 function hasValidAccessCode(req) {
   const expected = process.env.PERSONAFLOW_ACCESS_CODE
   if (!expected) return true
-  return req.headers['x-personaflow-access-code'] === expected
+  const received = req.headers['x-personaflow-access-code'] ?? ''
+  return timingSafeEqual(digest(received), digest(expected))
+}
+
+/**
+ * 다른 사이트가 사용자 브라우저를 통해 이 엔드포인트를 호출하지 못하게 한다.
+ * (로컬 구독 모드는 접근 코드가 없으므로, 방문한 아무 웹페이지가 localhost로 요청을 보내 구독을 쓸 수 있다)
+ * JSON Content-Type을 요구하면 다른 출처의 요청은 CORS 사전 요청에서 막힌다.
+ */
+function isCrossSiteRequest(req) {
+  const contentType = String(req.headers['content-type'] ?? '')
+  if (!contentType.toLowerCase().startsWith('application/json')) return true
+  return req.headers['sec-fetch-site'] === 'cross-site'
 }
 
 /** 브라우저가 보낸 콘텐츠 중 텍스트와 업로드된 이미지 참조만 통과시킨다. */
@@ -112,10 +130,13 @@ export function createClaudeHandler(backend) {
 
     if (req.method === 'GET') {
       const status = await backend.status()
+      const missingAccessCode = Boolean(process.env.VERCEL && !process.env.PERSONAFLOW_ACCESS_CODE)
       sendJson(res, 200, {
         backend: backend.name,
-        configured: status.configured,
-        detail: status.detail ?? null,
+        configured: status.configured && !missingAccessCode,
+        detail: missingAccessCode
+          ? '서버에 PERSONAFLOW_ACCESS_CODE가 설정되지 않았습니다.'
+          : (status.detail ?? null),
         accessCodeRequired: Boolean(process.env.PERSONAFLOW_ACCESS_CODE),
       })
       return
@@ -123,6 +144,19 @@ export function createClaudeHandler(backend) {
 
     if (req.method !== 'POST') {
       sendJson(res, 405, { error: 'Method not allowed' })
+      return
+    }
+
+    if (isCrossSiteRequest(req)) {
+      sendJson(res, 403, { error: '허용되지 않은 요청입니다.' })
+      return
+    }
+
+    // 배포 환경에서 접근 코드 없이 열어 두면 주소를 아는 누구나 회사 키를 쓸 수 있다.
+    if (process.env.VERCEL && !process.env.PERSONAFLOW_ACCESS_CODE) {
+      sendJson(res, 503, {
+        error: '서버에 PERSONAFLOW_ACCESS_CODE가 설정되지 않았습니다. 관리자에게 문의하세요.',
+      })
       return
     }
 
@@ -137,8 +171,8 @@ export function createClaudeHandler(backend) {
       if (!res.writableEnded) controller.abort()
     })
 
-    const body = await readBody(req)
     try {
+      const body = await readBody(req)
       if (body.op === 'verify') {
         await backend.verify(ALLOWED_MODELS.has(body.model) ? body.model : 'claude-opus-5-5')
         sendJson(res, 200, { ok: true })
