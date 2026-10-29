@@ -1,7 +1,7 @@
 /**
  * 요청 취소와 재시도.
  *
- * 무료 티어에서 429(할당량 초과)는 예외가 아니라 기본값에 가깝다.
+ * 사용량 한도(429)와 서버 과부하(529)는 드물지 않다.
  * 분석 한 번이 여러 번의 순차 호출로 이루어지므로, 마지막 호출에서 한 번 막혔다고
  * 앞의 결과를 전부 버리면 사용자는 같은 비용을 처음부터 다시 치른다.
  */
@@ -42,38 +42,18 @@ export interface RetryOptions {
 
 export const DEFAULT_MAX_ATTEMPTS = 4
 
-/** 재시도할 가치가 있는 HTTP 상태 */
+/** 재시도할 가치가 있는 HTTP 상태. 529는 Claude 서버 과부하 */
 export function isRetriableStatus(status: number): boolean {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504
+  return [429, 500, 502, 503, 504, 529].includes(status)
 }
 
-/**
- * Gemini는 429에 RetryInfo를 함께 내려준다.
- *   { error: { details: [{ "@type": "...RetryInfo", retryDelay: "38s" }] } }
- * 서버가 알려준 대기 시간이 있으면 그걸 우선한다.
- */
-export function parseServerRetryDelayMs(body: unknown, headerValue?: string | null): number | null {
-  const details = (body as { error?: { details?: unknown[] } })?.error?.details
-  if (Array.isArray(details)) {
-    for (const detail of details) {
-      const raw = (detail as { retryDelay?: unknown })?.retryDelay
-      if (typeof raw === 'string') {
-        const match = /^([\d.]+)s$/.exec(raw.trim())
-        if (match) {
-          const seconds = Number.parseFloat(match[1])
-          if (Number.isFinite(seconds)) return Math.round(seconds * 1000)
-        }
-      }
-    }
-  }
-
-  if (headerValue) {
-    const seconds = Number.parseFloat(headerValue)
-    if (Number.isFinite(seconds)) return Math.round(seconds * 1000)
-    const date = Date.parse(headerValue)
-    if (!Number.isNaN(date)) return Math.max(0, date - Date.now())
-  }
-
+/** 서버가 알려준 Retry-After(초 또는 HTTP 날짜)가 있으면 그 시간을 우선한다. */
+export function parseRetryAfterMs(value?: string | null): number | null {
+  if (!value) return null
+  const seconds = Number.parseFloat(value)
+  if (Number.isFinite(seconds)) return Math.round(seconds * 1000)
+  const date = Date.parse(value)
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now())
   return null
 }
 

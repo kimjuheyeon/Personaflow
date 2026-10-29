@@ -1,12 +1,12 @@
 /**
- * Gemini API 키 / 모델 설정을 브라우저 localStorage에 보관한다.
- * (개인용·데모 목적. 추후 유료 전환 시 백엔드 프록시로 이전 권장)
+ * Claude 연결 설정(접근 코드 / 모델)을 브라우저 localStorage에 보관한다.
+ * API 키는 브라우저에 두지 않는다. 구독 로그인이나 회사 API 키는 서버(/api/claude)가 가진다.
  */
 
-const KEY_STORAGE = 'personaflow_gemini_key'
-const MODEL_STORAGE = 'personaflow_gemini_model'
+const ACCESS_CODE_STORAGE = 'personaflow_access_code'
+const MODEL_STORAGE = 'personaflow_claude_model'
 
-export const DEFAULT_MODEL = 'gemini-2.5-flash'
+export const DEFAULT_MODEL = 'claude-opus-5-5'
 
 export interface ModelOption {
   id: string
@@ -14,33 +14,37 @@ export interface ModelOption {
   note: string
 }
 
-/** 무료 티어에서 사용 가능한 비전(이미지) 지원 모델 */
 export const MODEL_OPTIONS: ModelOption[] = [
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', note: '똑똑함 · 무료 한도 있음 (권장)' },
-  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', note: '가볍고 무료 한도 넉넉' },
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', note: '빠름 · 키에 따라 한도 0일 수 있음' },
-  { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', note: '가장 가벼움' },
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', note: '가장 정확함 (권장)' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', note: '빠르고 균형 잡힘' },
+  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', note: '가장 빠르고 가벼움' },
 ]
 
-export function getStoredKey(): string {
+/** 서버가 Claude를 호출하는 방식 */
+export const BACKEND_LABEL = {
+  subscription: '내 Claude 구독',
+  api: '회사 API 키',
+} as const
+
+export function getStoredAccessCode(): string {
   try {
-    return localStorage.getItem(KEY_STORAGE) ?? ''
+    return localStorage.getItem(ACCESS_CODE_STORAGE) ?? ''
   } catch {
     return ''
   }
 }
 
-export function storeKey(key: string): void {
+export function storeAccessCode(code: string): void {
   try {
-    localStorage.setItem(KEY_STORAGE, key.trim())
+    localStorage.setItem(ACCESS_CODE_STORAGE, code.trim())
   } catch {
     /* localStorage 비활성 환경 무시 */
   }
 }
 
-export function clearStoredKey(): void {
+export function clearStoredAccessCode(): void {
   try {
-    localStorage.removeItem(KEY_STORAGE)
+    localStorage.removeItem(ACCESS_CODE_STORAGE)
   } catch {
     /* noop */
   }
@@ -48,7 +52,9 @@ export function clearStoredKey(): void {
 
 export function getStoredModel(): string {
   try {
-    return localStorage.getItem(MODEL_STORAGE) || DEFAULT_MODEL
+    const stored = localStorage.getItem(MODEL_STORAGE)
+    // 이전 버전(Gemini)에서 저장한 값은 무시한다.
+    return MODEL_OPTIONS.some((option) => option.id === stored) ? (stored as string) : DEFAULT_MODEL
   } catch {
     return DEFAULT_MODEL
   }

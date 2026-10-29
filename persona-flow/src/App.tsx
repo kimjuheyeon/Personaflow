@@ -4,10 +4,10 @@ import FlowSetupStep from './pages/FlowSetupStep'
 import PersonaStep from './pages/PersonaStep'
 import RunningStep from './pages/RunningStep'
 import ReportPage from './pages/ReportPage'
-import ApiKeyModal from './components/ApiKeyModal'
+import ClaudeAccessModal from './components/ClaudeAccessModal'
 import OnboardingModal from './components/OnboardingModal'
 import SNB from './components/SNB'
-import { useApiKey } from './hooks/useApiKey'
+import { useClaudeAccess } from './hooks/useClaudeAccess'
 import { createDemoReport } from './lib/ai/demo'
 import { getTestHistory, saveTestReport, updateTestReportFeedback } from './lib/history'
 import { imageToBase64 } from './lib/image'
@@ -118,7 +118,7 @@ function App() {
   const [sourceType, setSourceType] = useState<SourceType>('figma')
   const [figmaUrl, setFigmaUrl] = useState('')
   const [figmaSource, setFigmaSource] = useState<FigmaSource | null>(null)
-  const [aiMode, setAiMode] = useState<AIMode>('gemini_free')
+  const [aiMode, setAiMode] = useState<AIMode>('claude')
   const [frames, setFrames] = useState<Frame[]>([])
   const [variants, setVariants] = useState<DesignVariant[]>(() => createDefaultVariants())
   const [abConfig, setAbConfig] = useState<ABTestConfig>(() => createDefaultABConfig())
@@ -129,7 +129,8 @@ function App() {
   const [report, setReport] = useState<TestReport | null>(null)
   const [history, setHistory] = useState<TestReport[]>(() => getTestHistory())
 
-  const { apiKey, model, hasKey, setApiKey, clearApiKey, setModel } = useApiKey()
+  const claude = useClaudeAccess()
+  const { accessCode, model, ready: aiReady } = claude
   const [keyModalOpen, setKeyModalOpen] = useState(false)
 
   const resetAll = () => {
@@ -138,7 +139,7 @@ function App() {
     setSourceType('figma')
     setFigmaUrl('')
     setFigmaSource(null)
-    setAiMode('gemini_free')
+    setAiMode('claude')
     setFrames([])
     setVariants(createDefaultVariants())
     setAbConfig(createDefaultABConfig())
@@ -182,7 +183,8 @@ function App() {
     setSourceType(savedReport.sourceType ?? 'image')
     setFigmaSource(savedReport.figmaSource ?? null)
     setFigmaUrl(savedReport.figmaSource?.url ?? '')
-    setAiMode(savedReport.aiMode ?? 'gemini_free')
+    // 이전 버전 리포트의 'gemini_free'도 실제 AI 분석으로 본다.
+    setAiMode(savedReport.aiMode === 'demo' ? 'demo' : 'claude')
     setFrames(savedReport.frames)
     setVariants(savedReport.variants ?? createDefaultVariants())
     setAbConfig(savedReport.abConfig ?? createDefaultABConfig())
@@ -227,15 +229,10 @@ function App() {
     setHistory(saveTestReport(nextReport))
   }
 
-  const handleSaveKey = (key: string, m: string) => {
-    setApiKey(key)
-    setModel(m)
+  const handleSaveAccess = (code: string, m: string) => {
+    claude.setAccessCode(code)
+    claude.setModel(m)
     setKeyModalOpen(false)
-  }
-
-  const handleClearKey = () => {
-    clearApiKey()
-    setKeyModalOpen(true)
   }
 
   /**
@@ -273,7 +270,8 @@ function App() {
       <SNB
         currentStep={step}
         onReset={resetAll}
-        hasKey={hasKey}
+        hasKey={aiReady}
+        backend={claude.status?.backend ?? null}
         model={model}
         onOpenKey={() => setKeyModalOpen(true)}
         history={history}
@@ -311,11 +309,10 @@ function App() {
               abConfig={abConfig}
               onAbConfigChange={setAbConfig}
               onNext={handleUploadNext}
-              hasApiKey={hasKey}
-              apiKey={apiKey}
+              aiReady={aiReady}
+              aiStatus={claude.status}
               model={model}
-              onSaveApiKey={handleSaveKey}
-              onRequireApiKey={() => setKeyModalOpen(true)}
+              onOpenAiSettings={() => setKeyModalOpen(true)}
             />
           )}
           {step === 'persona' && (
@@ -325,7 +322,8 @@ function App() {
               onNext={handlePersonaNext}
               onBack={handlePersonaBack}
               frames={activeFrames}
-              apiKey={apiKey}
+              accessCode={accessCode}
+              aiReady={aiReady}
               model={model}
               onRequireKey={() => setKeyModalOpen(true)}
             />
@@ -350,7 +348,8 @@ function App() {
               sourceType={sourceType}
               figmaSource={figmaSource}
               aiMode={aiMode}
-              apiKey={apiKey}
+              accessCode={accessCode}
+              aiReady={aiReady}
               model={model}
               onComplete={handleAnalysisComplete}
               onBack={handlePersonaBack}
@@ -362,7 +361,8 @@ function App() {
               key={report.id}
               report={report}
               onNewTest={resetAll}
-              apiKey={apiKey}
+              accessCode={accessCode}
+              aiReady={aiReady}
               model={model}
               onRequireKey={() => setKeyModalOpen(true)}
               onFeedbackThreadsChange={handleFeedbackThreadsChange}
@@ -372,14 +372,18 @@ function App() {
         </main>
       </div>
 
-      <ApiKeyModal
+      {/* 열 때마다 저장된 값으로 다시 시작하도록 key를 바꾼다 */}
+      <ClaudeAccessModal
+        key={keyModalOpen ? 'open' : 'closed'}
         open={keyModalOpen}
-        initialKey={apiKey}
+        status={claude.status}
+        statusError={claude.statusError}
+        initialAccessCode={accessCode}
         currentModel={model}
-        dismissable
-        onSave={handleSaveKey}
+        onSave={handleSaveAccess}
         onClose={() => setKeyModalOpen(false)}
-        onClear={handleClearKey}
+        onClear={claude.clearAccessCode}
+        onRefreshStatus={claude.refreshStatus}
       />
       <OnboardingModal
         open={onboardingOpen}

@@ -6,6 +6,8 @@
     "module": "esnext",
     "types": ["node"],
     "skipLibCheck": true,
+    /* vite.config.ts가 ../server의 로컬 API 핸들러(JS)를 불러온다 */
+    "allowJs": true,
 
     /* Bundler mode */
     "moduleResolution": "bundler",

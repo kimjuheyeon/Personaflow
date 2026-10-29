@@ -22,7 +22,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
-import { chatWithPersona } from '@/lib/ai/gemini'
+import { chatWithPersona } from '@/lib/ai/claude'
 import { getFrameDisplayName } from '@/lib/frameNaming'
 import type {
   TestReport,
@@ -40,7 +40,8 @@ import type {
 interface ReportPageProps {
   report: TestReport
   onNewTest: () => void
-  apiKey: string
+  accessCode: string
+  aiReady: boolean
   model: string
   onRequireKey: () => void
   onFeedbackThreadsChange: (threads: FeedbackThread[]) => void
@@ -640,13 +641,15 @@ const QUICK_QUESTIONS = [
 
 function InlineChatTab({
   report,
-  apiKey,
+  accessCode,
+  aiReady,
   model,
   onRequireKey,
   onFeedbackThreadsChange,
 }: {
   report: TestReport
-  apiKey: string
+  accessCode: string
+  aiReady: boolean
   model: string
   onRequireKey: () => void
   onFeedbackThreadsChange: (threads: FeedbackThread[]) => void
@@ -675,7 +678,7 @@ function InlineChatTab({
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || isTyping) return
-    if (!apiKey) {
+    if (!aiReady) {
       onRequireKey()
       return
     }
@@ -711,7 +714,7 @@ function InlineChatTab({
 
     try {
       const response = await chatWithPersona(
-        apiKey,
+        accessCode,
         model,
         chatFrame,
         currentPersona,
@@ -1744,7 +1747,8 @@ function downloadJson(report: TestReport) {
 export default function ReportPage({
   report,
   onNewTest,
-  apiKey,
+  accessCode,
+  aiReady,
   model,
   onRequireKey,
   onFeedbackThreadsChange,
@@ -1858,7 +1862,8 @@ export default function ReportPage({
         {activeTab === 'chat' && (
           <InlineChatTab
             report={report}
-            apiKey={apiKey}
+            accessCode={accessCode}
+            aiReady={aiReady}
             model={model}
             onRequireKey={onRequireKey}
             onFeedbackThreadsChange={onFeedbackThreadsChange}

@@ -1,6 +1,6 @@
 import { AXES } from './prompts'
 import { judgeFlowRuns } from './judge'
-import type { AnalysisResult } from './gemini'
+import type { AnalysisResult } from './claude'
 import type {
   ABTestConfig,
   ABComparison,
@@ -171,8 +171,8 @@ export async function analyzeDesignDemo(
     taskMetrics: demoMetrics,
     overallSummary:
       sourceType === 'figma'
-        ? '샘플 리포트는 Figma 링크와 화면 메타데이터를 기준으로 빠른 UX 점검 결과를 생성했습니다. 실제 화면 이미지 이해나 프로토타입 연결 자동 탐색은 아직 제한적이므로, 이번 결과는 제품 흐름 검증용 초안으로 보는 것이 적절합니다. 실제 AI 분석을 하려면 개인 액세스 토큰으로 Figma 화면 이미지를 가져온 뒤 Gemini 무료 API 키로 재실행하세요.'
-        : '샘플 리포트는 업로드된 화면 순서와 기본 UX 체크리스트를 기준으로 빠른 점검 결과를 생성했습니다. API 키 없이 즉시 제품 흐름을 확인하기 위한 모드이므로, 실제 화면 세부 분석은 Gemini 무료 API 키 연결 후 재실행하는 것이 좋습니다.',
+        ? '샘플 리포트는 Figma 링크와 화면 메타데이터를 기준으로 빠른 UX 점검 결과를 생성했습니다. 실제 화면 이미지 이해나 프로토타입 연결 자동 탐색은 아직 제한적이므로, 이번 결과는 제품 흐름 검증용 초안으로 보는 것이 적절합니다. 실제 AI 분석을 하려면 개인 액세스 토큰으로 Figma 화면 이미지를 가져온 뒤 Claude 연결 후 재실행하세요.'
+        : '샘플 리포트는 업로드된 화면 순서와 기본 UX 체크리스트를 기준으로 빠른 점검 결과를 생성했습니다. API 키 없이 즉시 제품 흐름을 확인하기 위한 모드이므로, 실제 화면 세부 분석은 Claude 연결 후 재실행하는 것이 좋습니다.',
     walkthrough: buildWalkthrough(frames, personas),
   }
 }

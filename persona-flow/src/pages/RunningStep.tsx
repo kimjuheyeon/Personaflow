@@ -3,7 +3,7 @@ import { Loader2, Check, Circle, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { analyzeABDesignDemo, analyzeDesignDemo, analyzeFlowDesignDemo } from '@/lib/ai/demo'
-import { analyzeABDesign, analyzeDesign, analyzeFlowDesign } from '@/lib/ai/gemini'
+import { analyzeABDesign, analyzeDesign, analyzeFlowDesign } from '@/lib/ai/claude'
 import { formatWait, isAbortError } from '@/lib/ai/retry'
 import { getFrameProjectLabel } from '@/lib/frameNaming'
 import type {
@@ -33,7 +33,8 @@ interface RunningStepProps {
   sourceType: SourceType
   figmaSource: FigmaSource | null
   aiMode: AIMode
-  apiKey: string
+  accessCode: string
+  aiReady: boolean
   model: string
   onComplete: (report: TestReport) => void
   onBack: () => void
@@ -123,7 +124,8 @@ export default function RunningStep({
   sourceType,
   figmaSource,
   aiMode,
-  apiKey,
+  accessCode,
+  aiReady,
   model,
   onComplete,
   onBack,
@@ -150,15 +152,15 @@ export default function RunningStep({
   const resumedFromCheckpoint = Boolean(checkpointRef.current.observations)
 
   const run = useCallback(async () => {
-    if (aiMode === 'gemini_free' && !apiKey) {
-      setError('Gemini API 키가 필요합니다. 키를 설정한 뒤 다시 시도하세요.')
+    if (aiMode === 'claude' && !aiReady) {
+      setError('Claude 연결이 필요합니다. 연결 설정을 확인한 뒤 다시 시도하세요.')
       return
     }
 
     const targetFrames =
       testMode === 'ab' ? variants.flatMap((variant) => variant.frames) : frames
     if (
-      aiMode === 'gemini_free' &&
+      aiMode === 'claude' &&
       (targetFrames.length === 0 || !targetFrames.every(hasFrameImage))
     ) {
       setError(
@@ -189,14 +191,14 @@ export default function RunningStep({
         testMode === 'ab'
           ? aiMode === 'demo'
             ? await analyzeABDesignDemo(variants, personas, abConfig)
-            : await analyzeABDesign(apiKey, model, variants, personas, abConfig, context)
+            : await analyzeABDesign(accessCode, model, variants, personas, abConfig, context)
           : isFlowTest
           ? aiMode === 'demo'
             ? await analyzeFlowDesignDemo(frames, personas, flowConfig)
-            : await analyzeFlowDesign(apiKey, model, frames, personas, flowConfig, context)
+            : await analyzeFlowDesign(accessCode, model, frames, personas, flowConfig, context)
           : aiMode === 'demo'
           ? await analyzeDesignDemo(frames, personas, sourceType, figmaSource)
-          : await analyzeDesign(apiKey, model, frames, personas, context)
+          : await analyzeDesign(accessCode, model, frames, personas, context)
       if (controller.signal.aborted) return
 
       const reportFrames = targetFrames
@@ -246,7 +248,8 @@ export default function RunningStep({
   }, [
     abConfig,
     aiMode,
-    apiKey,
+    accessCode,
+    aiReady,
     figmaSource,
     flowConfig,
     frames,
@@ -294,7 +297,7 @@ export default function RunningStep({
               페르소나로 돌아가기
             </Button>
             <Button variant="outline" size="sm" onClick={onRequireKey}>
-              키 변경
+              연결 설정
             </Button>
             <Button size="sm" onClick={run}>
               {resumedFromCheckpoint ? '이어서 다시 시도' : '다시 시도'}
@@ -459,10 +462,10 @@ export default function RunningStep({
 
         <p className="text-xs text-gray-400 text-center">
           {testMode === 'ab'
-            ? 'Gemini가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
+            ? 'Claude가 같은 페르소나 기준으로 A안과 B안을 비교 평가합니다'
             : isFlowTest
-            ? 'Gemini가 설정된 행동 연결 안에서 각 페르소나의 미션 수행 경로를 평가합니다'
-            : 'Gemini가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
+            ? 'Claude가 설정된 행동 연결 안에서 각 페르소나의 미션 수행 경로를 평가합니다'
+            : 'Claude가 각 페르소나 관점에서 6축 UX 기준을 평가합니다'}
         </p>
       </div>
     </div>

@@ -1,6 +1,8 @@
 /**
- * Google Gemini API 클라이언트 (브라우저 직접 호출 / BYOK).
- * 무료 티어: https://aistudio.google.com/apikey 에서 키 발급.
+ * Claude 클라이언트.
+ * 브라우저는 모델을 직접 호출하지 않고 /api/claude를 거친다. 서버가 둘 중 하나로 호출한다.
+ * - 내 Claude 구독: 로컬 실행(npm run dev) 시 이 PC의 Claude Code 로그인을 사용
+ * - 회사 API 키: 배포 서버(Vercel)에 둔 ANTHROPIC_API_KEY를 사용
  */
 
 import type {
@@ -27,7 +29,7 @@ import type {
   VariantId,
   FrameDesignContext,
 } from '@/types'
-import { imageToVisionImages } from '@/lib/image'
+import { imageToVisionImages, type InlineImage } from '@/lib/image'
 import { getFrameDisplayName, getFrameSecondaryLabel } from '@/lib/frameNaming'
 import { createFlowTestResult, getFlowFrameLabel } from '@/lib/flow'
 import {
@@ -48,134 +50,199 @@ import {
   delay,
   isAbortError,
   isRetriableStatus,
-  parseServerRetryDelayMs,
+  parseRetryAfterMs,
   throwIfAborted,
   type RetryNotice,
 } from './retry'
 
-const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
+const ENDPOINT = '/api/claude'
+const UPLOAD_CONCURRENCY = 4
 
-type Part =
-  | { text: string }
-  | { inlineData: { mimeType: string; data: string } }
+type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
-interface Content {
-  role: 'user' | 'model'
+type Part = { text: string } | { image: InlineImage }
+
+interface Turn {
+  role: 'user' | 'assistant'
   parts: Part[]
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'file'; file_id: string } }
+
 interface GenerateOptions {
-  apiKey: string
+  accessCode: string
   model: string
-  systemInstruction?: string
-  contents: Content[]
-  responseSchema?: unknown
-  temperature?: number
+  system?: string
+  messages: Turn[]
+  schema?: Record<string, unknown>
+  effort?: Effort
+  /** 같은 화면으로 여러 번 묻는 인라인 채팅처럼 앞부분이 반복될 때 */
+  cache?: boolean
   signal?: AbortSignal
   /** 재시도로 대기에 들어갈 때 호출된다. 진행 화면에 남은 시간을 보여주기 위한 것 */
   onRetry?: (notice: RetryNotice) => void
   maxAttempts?: number
 }
 
+export type ClaudeBackend = 'api' | 'subscription'
+
+export interface ClaudeServerStatus {
+  backend: ClaudeBackend
+  configured: boolean
+  detail: string | null
+  accessCodeRequired: boolean
+}
+
 /** 한 번의 요청 시도. 재시도 판단에 필요한 정보를 담아 던진다. */
-class TransientGeminiError extends Error {
+class TransientClaudeError extends Error {
   // 생성자 파라미터 프로퍼티는 erasableSyntaxOnly에서 금지되므로 명시적으로 선언한다.
   retryAfterMs: number | null
 
   constructor(message: string, retryAfterMs: number | null) {
     super(message)
-    this.name = 'TransientGeminiError'
+    this.name = 'TransientClaudeError'
     this.retryAfterMs = retryAfterMs
   }
 }
 
-async function requestOnce(opts: GenerateOptions): Promise<string> {
-  const url = `${API_BASE}/${opts.model}:generateContent?key=${encodeURIComponent(
-    opts.apiKey
-  )}`
+interface ProxyErrorBody {
+  error?: string
+  reason?: string
+  retryAfter?: string | null
+  permanent?: boolean
+}
 
-  const hasMedia = opts.contents.some((content) =>
-    content.parts.some((part) => 'inlineData' in part)
-  )
-  const body: Record<string, unknown> = {
-    contents: opts.contents,
-    generationConfig: {
-      temperature: opts.temperature ?? 0.7,
-      ...(hasMedia ? { mediaResolution: 'MEDIA_RESOLUTION_HIGH' } : {}),
-      ...(opts.responseSchema
-        ? {
-            responseMimeType: 'application/json',
-            responseSchema: opts.responseSchema,
-          }
-        : {}),
-    },
-  }
-  if (opts.systemInstruction) {
-    body.systemInstruction = { parts: [{ text: opts.systemInstruction }] }
-  }
+const SERVER_UNAVAILABLE_MESSAGE =
+  'AI 서버(/api/claude)에 연결할 수 없습니다. 로컬에서는 `npm run dev`로 실행 중인지 확인하세요.'
 
+async function callProxy<T>(
+  accessCode: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<T> {
   let res: Response
   try {
-    res = await fetch(url, {
+    res = await fetch(ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(accessCode ? { 'X-PersonaFlow-Access-Code': accessCode } : {}),
+      },
       body: JSON.stringify(body),
-      signal: opts.signal,
+      signal,
     })
   } catch (error) {
     if (isAbortError(error)) throw new AnalysisAbortedError()
     // 일시적 네트워크 오류일 수 있으므로 재시도 대상으로 던진다.
-    throw new TransientGeminiError('네트워크 오류로 Gemini에 연결할 수 없습니다.', null)
+    throw new TransientClaudeError('네트워크 오류로 AI 서버에 연결할 수 없습니다.', null)
   }
 
-  if (!res.ok) {
-    let parsed: unknown = null
-    let detail = ''
-    try {
-      parsed = await res.json()
-      detail = (parsed as { error?: { message?: string } })?.error?.message ?? ''
-    } catch {
-      /* 본문이 JSON이 아닐 수 있다 */
-    }
+  const isJson = (res.headers.get('content-type') ?? '').includes('application/json')
+  const data = isJson ? ((await res.json().catch(() => null)) as (T & ProxyErrorBody) | null) : null
 
-    if (isRetriableStatus(res.status)) {
-      const serverDelay = parseServerRetryDelayMs(parsed, res.headers.get('retry-after'))
-      throw new TransientGeminiError(
-        res.status === 429
-          ? `무료 사용 한도에 걸렸습니다.${detail ? ` (${detail})` : ''}`
-          : `Gemini 서버가 일시적으로 응답하지 못했습니다. (HTTP ${res.status})`,
-        serverDelay
-      )
-    }
+  if (res.ok) {
+    if (!data) throw new PermanentAnalysisError(SERVER_UNAVAILABLE_MESSAGE)
+    return data
+  }
 
-    const base = detail || `Gemini 요청 실패 (HTTP ${res.status})`
-    throw new PermanentAnalysisError(
-      res.status === 400 || res.status === 401 || res.status === 403
-        ? `API 키가 올바르지 않거나 요청이 거부되었습니다. (${base})`
-        : base
+  const detail = data?.error ?? ''
+  if (isRetriableStatus(res.status) && !data?.permanent) {
+    throw new TransientClaudeError(
+      detail || `AI 서버가 일시적으로 응답하지 못했습니다. (HTTP ${res.status})`,
+      parseRetryAfterMs(data?.retryAfter)
     )
   }
+  if (res.status === 404 && !data) throw new PermanentAnalysisError(SERVER_UNAVAILABLE_MESSAGE)
+  throw new PermanentAnalysisError(detail || `AI 요청 실패 (HTTP ${res.status})`)
+}
 
-  const data = await res.json()
-  const blockReason = data?.promptFeedback?.blockReason
-  if (blockReason) {
-    throw new PermanentAnalysisError(
-      `요청이 안전 필터에 의해 차단되었습니다. (${blockReason})`
-    )
+/**
+ * 같은 이미지는 한 번만 올린다. 관찰 단계와 분석 단계, 인라인 채팅이 같은 화면 이미지를 공유한다.
+ * 실패한 업로드는 캐시에서 빼서 다음 시도에 다시 올린다.
+ */
+const uploadedImages = new Map<string, Promise<string>>()
+
+async function imageCacheKey(image: InlineImage): Promise<string> {
+  const bytes = new TextEncoder().encode(`${image.mimeType}:${image.data}`)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function uploadImage(
+  accessCode: string,
+  image: InlineImage,
+  signal?: AbortSignal
+): Promise<string> {
+  const key = await imageCacheKey(image)
+  let pending = uploadedImages.get(key)
+  if (!pending) {
+    pending = callProxy<{ fileId: string }>(
+      accessCode,
+      { op: 'upload', mimeType: image.mimeType, data: image.data },
+      signal
+    ).then((result) => result.fileId)
+    uploadedImages.set(key, pending)
+    pending.catch(() => uploadedImages.delete(key))
   }
-  const parts = data?.candidates?.[0]?.content?.parts ?? []
-  const text = parts
-    .map((p: { text?: string }) => p.text ?? '')
-    .join('')
-    .trim()
+  return pending
+}
+
+async function toContentBlocks(
+  accessCode: string,
+  parts: Part[],
+  signal?: AbortSignal
+): Promise<ContentBlock[]> {
+  const blocks: ContentBlock[] = new Array(parts.length)
+  let next = 0
+  const worker = async () => {
+    while (next < parts.length) {
+      const index = next++
+      const part = parts[index]
+      blocks[index] =
+        'text' in part
+          ? { type: 'text', text: part.text }
+          : {
+              type: 'image',
+              source: { type: 'file', file_id: await uploadImage(accessCode, part.image, signal) },
+            }
+    }
+  }
+  await Promise.all(Array.from({ length: UPLOAD_CONCURRENCY }, worker))
+  return blocks
+}
+
+async function requestOnce(opts: GenerateOptions): Promise<string> {
+  const messages = await Promise.all(
+    opts.messages.map(async (turn) => ({
+      role: turn.role,
+      content: await toContentBlocks(opts.accessCode, turn.parts, opts.signal),
+    }))
+  )
+
+  const data = await callProxy<{ text: string }>(
+    opts.accessCode,
+    {
+      op: 'generate',
+      model: opts.model,
+      system: opts.system,
+      messages,
+      schema: opts.schema ? strictSchema(opts.schema) : undefined,
+      effort: opts.effort ?? 'medium',
+      cache: opts.cache,
+    },
+    opts.signal
+  )
+  const text = data.text?.trim() ?? ''
   // 빈 응답은 재시도로 풀리는 경우가 많다.
-  if (!text) throw new TransientGeminiError('Gemini가 빈 응답을 반환했습니다.', null)
+  if (!text) throw new TransientClaudeError('Claude가 빈 응답을 반환했습니다.', null)
   return text
 }
 
 async function generateContent(opts: GenerateOptions): Promise<string> {
   const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
-  let lastMessage = 'Gemini 요청에 실패했습니다.'
+  let lastMessage = 'Claude 요청에 실패했습니다.'
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     throwIfAborted(opts.signal)
@@ -184,7 +251,7 @@ async function generateContent(opts: GenerateOptions): Promise<string> {
     } catch (error) {
       if (isAbortError(error)) throw new AnalysisAbortedError()
       if (error instanceof PermanentAnalysisError) throw error
-      if (!(error instanceof TransientGeminiError)) throw error
+      if (!(error instanceof TransientClaudeError)) throw error
 
       lastMessage = error.message
       if (attempt === maxAttempts) break
@@ -203,6 +270,18 @@ async function generateContent(opts: GenerateOptions): Promise<string> {
   throw new Error(
     `${lastMessage} ${maxAttempts}회 시도했지만 실패했습니다. 잠시 후 다시 시도하거나 더 가벼운 모델로 바꿔보세요.`
   )
+}
+
+/** 구조화 출력은 모든 객체에 additionalProperties: false를 요구한다. */
+function strictSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(strictSchema)
+  if (!schema || typeof schema !== 'object') return schema
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(schema)) {
+    result[key] = key === 'enum' || key === 'required' ? value : strictSchema(value)
+  }
+  if (result.type === 'object') result.additionalProperties = false
+  return result
 }
 
 function parseJson<T>(text: string): T {
@@ -284,7 +363,7 @@ async function appendFrameImageParts(
   })
   for (const image of images) {
     parts.push({ text: `이미지 보기: ${image.label}` })
-    parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } })
+    parts.push({ image: { mimeType: image.mimeType, data: image.data } })
   }
 }
 
@@ -352,35 +431,35 @@ async function buildVariantParts(
 }
 
 const screenObservationSchema = {
-  type: 'OBJECT',
+  type: 'object',
   properties: {
     screens: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
-          frameId: { type: 'STRING' },
-          summary: { type: 'STRING' },
+          frameId: { type: 'string' },
+          summary: { type: 'string' },
           visibleTexts: {
-            type: 'ARRAY',
-            items: { type: 'STRING' },
+            type: 'array',
+            items: { type: 'string' },
           },
           interactiveElements: {
-            type: 'ARRAY',
+            type: 'array',
             items: {
-              type: 'OBJECT',
+              type: 'object',
               properties: {
-                label: { type: 'STRING' },
-                role: { type: 'STRING' },
-                location: { type: 'STRING' },
-                confidence: { type: 'INTEGER' },
+                label: { type: 'string' },
+                role: { type: 'string' },
+                location: { type: 'string' },
+                confidence: { type: 'integer' },
               },
               required: ['label', 'role', 'location', 'confidence'],
             },
           },
           unreadableAreas: {
-            type: 'ARRAY',
-            items: { type: 'STRING' },
+            type: 'array',
+            items: { type: 'string' },
           },
         },
         required: [
@@ -470,7 +549,7 @@ function retryReporter(
 }
 
 async function observeScreens(
-  apiKey: string,
+  accessCode: string,
   model: string,
   frames: FrameInput[],
   options: Pick<FramePartOptions, 'hideNames' | 'hideOrder'> = {},
@@ -492,16 +571,15 @@ async function observeScreens(
       maxDetailImages: 5,
     })
     const text = await generateContent({
-      apiKey,
+      accessCode,
       model,
-      contents: [
+      messages: [
         {
           role: 'user',
           parts: [{ text: observationPrompt(batch) }, ...imageParts],
         },
       ],
-      responseSchema: screenObservationSchema,
-      temperature: 0.1,
+      schema: screenObservationSchema,
       signal: context?.signal,
       onRetry: retryReporter(context, 'observe', batchIndex, batchCount),
     })
@@ -546,15 +624,31 @@ function formatScreenObservations(observations: ScreenObservation[]): string {
     .join('\n\n')
 }
 
-/* ── 0) 키 검증 ── */
+/* ── 0) 연결 확인 ── */
 
-export async function testApiKey(apiKey: string, model: string): Promise<void> {
-  await generateContent({
-    apiKey,
-    model,
-    contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
-    temperature: 0,
-  })
+/** 서버가 어떤 방식(구독 / 회사 API 키)으로 Claude를 호출하는지, 바로 쓸 수 있는지 확인한다. */
+export async function getClaudeServerStatus(signal?: AbortSignal): Promise<ClaudeServerStatus> {
+  let res: Response
+  try {
+    res = await fetch(ENDPOINT, { signal })
+  } catch (error) {
+    if (isAbortError(error)) throw new AnalysisAbortedError()
+    throw new Error(SERVER_UNAVAILABLE_MESSAGE, { cause: error })
+  }
+  if (!res.ok || !(res.headers.get('content-type') ?? '').includes('application/json')) {
+    throw new Error(SERVER_UNAVAILABLE_MESSAGE)
+  }
+  return (await res.json()) as ClaudeServerStatus
+}
+
+/** 접근 코드와 모델 사용 가능 여부를 확인한다. 모델을 호출하지 않으므로 사용량이 들지 않는다. */
+export async function verifyClaudeAccess(accessCode: string, model: string): Promise<void> {
+  try {
+    await callProxy(accessCode, { op: 'verify', model })
+  } catch (error) {
+    if (error instanceof TransientClaudeError) throw new Error(error.message, { cause: error })
+    throw error
+  }
 }
 
 /* ── 1) 페르소나 추천 ── */
@@ -570,23 +664,23 @@ interface RawPersona {
 }
 
 const personaSchema = {
-  type: 'OBJECT',
+  type: 'object',
   properties: {
     personas: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
-          name: { type: 'STRING' },
-          role: { type: 'STRING' },
+          name: { type: 'string' },
+          role: { type: 'string' },
           digitalLevel: {
-            type: 'STRING',
+            type: 'string',
             enum: ['beginner', 'intermediate', 'expert'],
           },
-          goal: { type: 'STRING' },
-          device: { type: 'STRING', enum: ['desktop', 'mobile', 'tablet'] },
-          context: { type: 'STRING' },
-          avatar: { type: 'STRING' },
+          goal: { type: 'string' },
+          device: { type: 'string', enum: ['desktop', 'mobile', 'tablet'] },
+          context: { type: 'string' },
+          avatar: { type: 'string' },
         },
         required: ['name', 'role', 'digitalLevel', 'goal', 'device', 'context'],
       },
@@ -596,22 +690,21 @@ const personaSchema = {
 }
 
 export async function suggestPersonas(
-  apiKey: string,
+  accessCode: string,
   model: string,
   frames: FrameInput[]
 ): Promise<PersonaConfig[]> {
   const frameParts = await buildFrameParts(frames)
   const text = await generateContent({
-    apiKey,
+    accessCode,
     model,
-    contents: [
+    messages: [
       {
         role: 'user',
         parts: [{ text: personaSuggestionPrompt(frames.length) }, ...frameParts],
       },
     ],
-    responseSchema: personaSchema,
-    temperature: 0.9,
+    schema: personaSchema,
   })
 
   const parsed = parseJson<{ personas: RawPersona[] }>(text)
@@ -643,22 +736,22 @@ export interface AnalysisResult {
 }
 
 const analysisSchema = {
-  type: 'OBJECT',
+  type: 'object',
   properties: {
     walkthrough: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
-          frameId: { type: 'STRING' },
-          personaName: { type: 'STRING' },
-          action: { type: 'STRING' },
-          observedElement: { type: 'STRING' },
-          evidence: { type: 'STRING' },
-          confidence: { type: 'INTEGER' },
-          thought: { type: 'STRING' },
+          frameId: { type: 'string' },
+          personaName: { type: 'string' },
+          action: { type: 'string' },
+          observedElement: { type: 'string' },
+          evidence: { type: 'string' },
+          confidence: { type: 'integer' },
+          thought: { type: 'string' },
           emotion: {
-            type: 'STRING',
+            type: 'string',
             enum: ['positive', 'neutral', 'confused', 'frustrated'],
           },
         },
@@ -675,35 +768,35 @@ const analysisSchema = {
       },
     },
     axisScores: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
-          axis: { type: 'INTEGER' },
-          label: { type: 'STRING' },
-          score: { type: 'INTEGER' },
+          axis: { type: 'integer' },
+          label: { type: 'string' },
+          score: { type: 'integer' },
         },
         required: ['axis', 'label', 'score'],
       },
     },
     findings: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
           severity: {
-            type: 'STRING',
+            type: 'string',
             enum: ['critical', 'warning', 'suggestion'],
           },
-          axis: { type: 'INTEGER' },
-          axisLabel: { type: 'STRING' },
-          heuristic: { type: 'STRING' },
-          problem: { type: 'STRING' },
-          taskMetric: { type: 'STRING' },
-          suggestion: { type: 'STRING' },
-          frameId: { type: 'STRING' },
-          evidence: { type: 'STRING' },
-          confidence: { type: 'INTEGER' },
+          axis: { type: 'integer' },
+          axisLabel: { type: 'string' },
+          heuristic: { type: 'string' },
+          problem: { type: 'string' },
+          taskMetric: { type: 'string' },
+          suggestion: { type: 'string' },
+          frameId: { type: 'string' },
+          evidence: { type: 'string' },
+          confidence: { type: 'integer' },
         },
         required: [
           'severity',
@@ -719,16 +812,16 @@ const analysisSchema = {
       },
     },
     taskMetrics: {
-      type: 'OBJECT',
+      type: 'object',
       properties: {
-        completionRate: { type: 'INTEGER' },
-        avgClicks: { type: 'NUMBER' },
-        errorRate: { type: 'INTEGER' },
-        dropoffPoint: { type: 'STRING' },
+        completionRate: { type: 'integer' },
+        avgClicks: { type: 'number' },
+        errorRate: { type: 'integer' },
+        dropoffPoint: { type: 'string' },
       },
       required: ['completionRate', 'avgClicks', 'errorRate', 'dropoffPoint'],
     },
-    overallSummary: { type: 'STRING' },
+    overallSummary: { type: 'string' },
   },
   required: [
     'walkthrough',
@@ -740,40 +833,40 @@ const analysisSchema = {
 }
 
 const variantScoresSchema = {
-  type: 'ARRAY',
+  type: 'array',
   items: {
-    type: 'OBJECT',
+    type: 'object',
     properties: {
-      variantId: { type: 'STRING', enum: ['A', 'B'] },
+      variantId: { type: 'string', enum: ['A', 'B'] },
       axisScores: {
-        type: 'ARRAY',
+        type: 'array',
         items: {
-          type: 'OBJECT',
+          type: 'object',
           properties: {
-            axis: { type: 'INTEGER' },
-            label: { type: 'STRING' },
-            score: { type: 'INTEGER' },
+            axis: { type: 'integer' },
+            label: { type: 'string' },
+            score: { type: 'integer' },
           },
           required: ['axis', 'label', 'score'],
         },
       },
       taskMetrics: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
-          completionRate: { type: 'INTEGER' },
-          avgClicks: { type: 'NUMBER' },
-          errorRate: { type: 'INTEGER' },
-          dropoffPoint: { type: 'STRING' },
+          completionRate: { type: 'integer' },
+          avgClicks: { type: 'number' },
+          errorRate: { type: 'integer' },
+          dropoffPoint: { type: 'string' },
         },
         required: ['completionRate', 'avgClicks', 'errorRate', 'dropoffPoint'],
       },
       strengths: {
-        type: 'ARRAY',
-        items: { type: 'STRING' },
+        type: 'array',
+        items: { type: 'string' },
       },
       weaknesses: {
-        type: 'ARRAY',
-        items: { type: 'STRING' },
+        type: 'array',
+        items: { type: 'string' },
       },
     },
     required: ['variantId', 'axisScores', 'taskMetrics', 'strengths', 'weaknesses'],
@@ -785,26 +878,26 @@ const abAnalysisSchema = {
   properties: {
     ...analysisSchema.properties,
     abComparison: {
-      type: 'OBJECT',
+      type: 'object',
       properties: {
-        winner: { type: 'STRING', enum: ['A', 'B', 'tie'] },
-        confidence: { type: 'INTEGER' },
-        summary: { type: 'STRING' },
-        recommendation: { type: 'STRING' },
+        winner: { type: 'string', enum: ['A', 'B', 'tie'] },
+        confidence: { type: 'integer' },
+        summary: { type: 'string' },
+        recommendation: { type: 'string' },
         keyInsights: {
-          type: 'ARRAY',
-          items: { type: 'STRING' },
+          type: 'array',
+          items: { type: 'string' },
         },
         variantScores: variantScoresSchema,
         personaPreferences: {
-          type: 'ARRAY',
+          type: 'array',
           items: {
-            type: 'OBJECT',
+            type: 'object',
             properties: {
-              personaId: { type: 'STRING' },
-              personaName: { type: 'STRING' },
-              preferredVariant: { type: 'STRING', enum: ['A', 'B', 'tie'] },
-              reason: { type: 'STRING' },
+              personaId: { type: 'string' },
+              personaName: { type: 'string' },
+              preferredVariant: { type: 'string', enum: ['A', 'B', 'tie'] },
+              reason: { type: 'string' },
             },
             required: ['personaName', 'preferredVariant', 'reason'],
           },
@@ -897,7 +990,7 @@ function normalizeABComparison(raw: RawABComparison | undefined): ABComparison |
 }
 
 export async function analyzeDesign(
-  apiKey: string,
+  accessCode: string,
   model: string,
   frames: FrameInput[],
   personas: PersonaConfig[],
@@ -906,7 +999,7 @@ export async function analyzeDesign(
   const checkpoint = context?.checkpoint
   let observations = checkpoint?.observations
   if (!observations) {
-    observations = await observeScreens(apiKey, model, frames, {}, context)
+    observations = await observeScreens(accessCode, model, frames, {}, context)
     if (checkpoint) checkpoint.observations = observations
   } else {
     reportProgress(context, 'observe', 1, 1)
@@ -922,9 +1015,9 @@ export async function analyzeDesign(
 ${formatScreenObservations(observations)}`
   reportProgress(context, 'analyze', 0, 1)
   const text = await generateContent({
-    apiKey,
+    accessCode,
     model,
-    contents: [
+    messages: [
       {
         role: 'user',
         parts: [
@@ -935,8 +1028,7 @@ ${formatScreenObservations(observations)}`
         ],
       },
     ],
-    responseSchema: analysisSchema,
-    temperature: 0.6,
+    schema: analysisSchema,
     signal: context?.signal,
     onRetry: retryReporter(context, 'analyze', 0, 1),
   })
@@ -1010,38 +1102,38 @@ interface RawFlowAnalysis {
 }
 
 const flowTesterSchema = {
-  type: 'OBJECT',
+  type: 'object',
   properties: {
     runs: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
+        type: 'object',
         properties: {
-          personaId: { type: 'STRING' },
-          personaName: { type: 'STRING' },
+          personaId: { type: 'string' },
+          personaName: { type: 'string' },
           outcome: {
-            type: 'STRING',
+            type: 'string',
             enum: ['success', 'partial', 'failed', 'abandoned'],
           },
           steps: {
-            type: 'ARRAY',
+            type: 'array',
             items: {
-              type: 'OBJECT',
+              type: 'object',
               properties: {
-                action: { type: 'STRING' },
-                observedElement: { type: 'STRING' },
-                evidence: { type: 'STRING' },
-                confidence: { type: 'INTEGER' },
-                targetFrameId: { type: 'STRING' },
-                expectation: { type: 'STRING' },
-                thought: { type: 'STRING' },
+                action: { type: 'string' },
+                observedElement: { type: 'string' },
+                evidence: { type: 'string' },
+                confidence: { type: 'integer' },
+                targetFrameId: { type: 'string' },
+                expectation: { type: 'string' },
+                thought: { type: 'string' },
                 emotion: {
-                  type: 'STRING',
+                  type: 'string',
                   enum: ['positive', 'neutral', 'confused', 'frustrated'],
                 },
-                durationSeconds: { type: 'NUMBER' },
-                friction: { type: 'STRING' },
-                recommendation: { type: 'STRING' },
+                durationSeconds: { type: 'number' },
+                friction: { type: 'string' },
+                recommendation: { type: 'string' },
               },
               required: [
                 'action',
@@ -1056,17 +1148,17 @@ const flowTesterSchema = {
             },
           },
           interview: {
-            type: 'ARRAY',
+            type: 'array',
             items: {
-              type: 'OBJECT',
+              type: 'object',
               properties: {
-                question: { type: 'STRING' },
-                answer: { type: 'STRING' },
+                question: { type: 'string' },
+                answer: { type: 'string' },
               },
               required: ['question', 'answer'],
             },
           },
-          summary: { type: 'STRING' },
+          summary: { type: 'string' },
         },
         required: ['personaName', 'outcome', 'steps', 'interview', 'summary'],
       },
@@ -1076,11 +1168,11 @@ const flowTesterSchema = {
 }
 
 const flowAnalystSchema = {
-  type: 'OBJECT',
+  type: 'object',
   properties: {
     axisScores: analysisSchema.properties.axisScores,
     findings: analysisSchema.properties.findings,
-    overallSummary: { type: 'STRING' },
+    overallSummary: { type: 'string' },
   },
   required: ['axisScores', 'findings', 'overallSummary'],
 }
@@ -1285,7 +1377,7 @@ ${steps || '  (행동 없음)'}${interview ? `\n  사후 인터뷰:\n${interview
 }
 
 export async function analyzeFlowDesign(
-  apiKey: string,
+  accessCode: string,
   model: string,
   frames: Frame[],
   personas: PersonaConfig[],
@@ -1301,7 +1393,7 @@ export async function analyzeFlowDesign(
   let observations = checkpoint?.observations
   if (!observations) {
     observations = await observeScreens(
-      apiKey,
+      accessCode,
       model,
       blindFrames,
       { hideNames: true, hideOrder: true },
@@ -1332,16 +1424,15 @@ export async function analyzeFlowDesign(
 
 ${formatScreenObservations(observations)}`
     const testerText = await generateContent({
-      apiKey,
+      accessCode,
       model,
-      contents: [
+      messages: [
         {
           role: 'user',
           parts: [{ text: testerPrompt }, ...frameParts],
         },
       ],
-      responseSchema: flowTesterSchema,
-      temperature: 0.65,
+      schema: flowTesterSchema,
       signal: context?.signal,
       onRetry: retryReporter(context, 'test', 0, 1),
     })
@@ -1366,9 +1457,9 @@ ${formatScreenObservations(observations)}`
    */
   reportProgress(context, 'analyze', 0, 1)
   const analystText = await generateContent({
-    apiKey,
+    accessCode,
     model,
-    contents: [
+    messages: [
       {
         role: 'user',
         parts: [
@@ -1387,8 +1478,7 @@ ${formatJudgment(judgment, frames)}`,
         ],
       },
     ],
-    responseSchema: flowAnalystSchema,
-    temperature: 0.4,
+    schema: flowAnalystSchema,
     signal: context?.signal,
     onRetry: retryReporter(context, 'analyze', 0, 1),
   })
@@ -1479,7 +1569,7 @@ ${formatJudgment(judgment, frames)}`,
 }
 
 export async function analyzeABDesign(
-  apiKey: string,
+  accessCode: string,
   model: string,
   variants: DesignVariant[],
   personas: PersonaConfig[],
@@ -1496,7 +1586,7 @@ export async function analyzeABDesign(
   )
   let observations = checkpoint?.observations
   if (!observations) {
-    observations = await observeScreens(apiKey, model, observationFrames, {}, context)
+    observations = await observeScreens(accessCode, model, observationFrames, {}, context)
     if (checkpoint) checkpoint.observations = observations
   } else {
     reportProgress(context, 'observe', 1, 1)
@@ -1510,9 +1600,9 @@ A/B 차이와 발견점은 반드시 이 관찰 결과 또는 이어지는 전�
 
 ${formatScreenObservations(observations)}`
   const text = await generateContent({
-    apiKey,
+    accessCode,
     model,
-    contents: [
+    messages: [
       {
         role: 'user',
         parts: [
@@ -1523,8 +1613,7 @@ ${formatScreenObservations(observations)}`
         ],
       },
     ],
-    responseSchema: abAnalysisSchema,
-    temperature: 0.6,
+    schema: abAnalysisSchema,
     signal: context?.signal,
     onRetry: retryReporter(context, 'analyze', 0, 1),
   })
@@ -1560,7 +1649,7 @@ ${formatScreenObservations(observations)}`
 /* ── 3) 인라인 채팅 ── */
 
 export async function chatWithPersona(
-  apiKey: string,
+  accessCode: string,
   model: string,
   frame: {
     name: string
@@ -1582,7 +1671,7 @@ export async function chatWithPersona(
       })
       for (const image of images) {
         firstParts.push({ text: `현재 화면 보기: ${image.label}` })
-        firstParts.push({ inlineData: { mimeType: image.mimeType, data: image.data } })
+        firstParts.push({ image: { mimeType: image.mimeType, data: image.data } })
       }
     } catch {
       /* 이미지 없이도 텍스트로 진행 */
@@ -1593,23 +1682,24 @@ export async function chatWithPersona(
     text: `지금 보고 있는 화면: "${frameName}". 이 화면을 사용하는 입장에서 답하세요.`,
   })
 
-  const contents: Content[] = [
+  const messages: Turn[] = [
     { role: 'user', parts: firstParts },
-    { role: 'model', parts: [{ text: '네, 화면 보고 있어요. 무엇이든 물어보세요.' }] },
+    { role: 'assistant', parts: [{ text: '네, 화면 보고 있어요. 무엇이든 물어보세요.' }] },
   ]
   for (const m of history) {
-    contents.push({
-      role: m.role === 'user' ? 'user' : 'model',
+    messages.push({
+      role: m.role === 'user' ? 'user' : 'assistant',
       parts: [{ text: m.content }],
     })
   }
-  contents.push({ role: 'user', parts: [{ text: question }] })
+  messages.push({ role: 'user', parts: [{ text: question }] })
 
   return generateContent({
-    apiKey,
+    accessCode,
     model,
-    systemInstruction: chatSystemPrompt(persona, frameName),
-    contents,
-    temperature: 0.8,
+    system: chatSystemPrompt(persona, frameName),
+    messages,
+    effort: 'low',
+    cache: true,
   })
 }

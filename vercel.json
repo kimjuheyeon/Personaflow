@@ -1,5 +1,10 @@
 {
   "buildCommand": "cd persona-flow && npm install && npm run build",
   "outputDirectory": "persona-flow/dist",
-  "installCommand": "cd persona-flow && npm install"
+  "installCommand": "npm install && cd persona-flow && npm install",
+  "functions": {
+    "api/claude.js": {
+      "maxDuration": 300
+    }
+  }
 }

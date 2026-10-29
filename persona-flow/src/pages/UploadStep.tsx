@@ -14,10 +14,9 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { importFigmaFrames } from '@/lib/figmaApi'
-import { testApiKey } from '@/lib/ai/gemini'
-import { MODEL_OPTIONS } from '@/lib/ai/keyStore'
+import type { ClaudeServerStatus } from '@/lib/ai/claude'
+import { BACKEND_LABEL, MODEL_OPTIONS } from '@/lib/ai/keyStore'
 import {
   clearStoredFigmaToken,
   getStoredFigmaToken,
@@ -55,11 +54,10 @@ interface UploadStepProps {
   abConfig: ABTestConfig
   onAbConfigChange: (config: ABTestConfig) => void
   onNext: () => void
-  hasApiKey: boolean
-  apiKey: string
+  aiReady: boolean
+  aiStatus: ClaudeServerStatus | null
   model: string
-  onSaveApiKey: (key: string, model: string) => void
-  onRequireApiKey: () => void
+  onOpenAiSettings: () => void
 }
 
 const CRITERIA_OPTIONS = ['첫인상', '이해도', '전환 유도', '탐색 흐름', '신뢰감']
@@ -210,11 +208,10 @@ export default function UploadStep({
   abConfig,
   onAbConfigChange,
   onNext,
-  hasApiKey,
-  apiKey,
+  aiReady,
+  aiStatus,
   model,
-  onSaveApiKey,
-  onRequireApiKey,
+  onOpenAiSettings,
 }: UploadStepProps) {
   const [dragTarget, setDragTarget] = useState<'single' | VariantId | null>(null)
   const [draggedFrame, setDraggedFrame] = useState<DraggedFrame | null>(null)
@@ -228,10 +225,6 @@ export default function UploadStep({
   )
   const [editingFigmaLinks, setEditingFigmaLinks] = useState(() => !figmaSource)
   const [figmaImporting, setFigmaImporting] = useState(false)
-  const [geminiKeyInput, setGeminiKeyInput] = useState(apiKey)
-  const [geminiModel, setGeminiModel] = useState(model)
-  const [geminiTesting, setGeminiTesting] = useState(false)
-  const [geminiError, setGeminiError] = useState<string | null>(null)
   const [figmaLinkRows, setFigmaLinkRows] = useState<FigmaLinkRow[]>(() =>
     buildInitialFigmaRows(figmaUrl, figmaSource, frames)
   )
@@ -454,20 +447,6 @@ export default function UploadStep({
     storeFigmaToken(figmaToken.trim())
     setFigmaAccessConnected(true)
     setFigmaError(null)
-  }
-
-  const handleConnectGemini = async () => {
-    if (!geminiKeyInput.trim()) return
-    setGeminiTesting(true)
-    setGeminiError(null)
-    try {
-      await testApiKey(geminiKeyInput.trim(), geminiModel)
-      onSaveApiKey(geminiKeyInput.trim(), geminiModel)
-    } catch (error) {
-      setGeminiError(error instanceof Error ? error.message : 'Gemini 연결 테스트에 실패했습니다.')
-    } finally {
-      setGeminiTesting(false)
-    }
   }
 
   const processSingleFiles = useCallback(
@@ -702,7 +681,7 @@ export default function UploadStep({
   const filledFigmaRows = getFilledFigmaRows(figmaLinkRows)
   const connectedFigmaRows = figmaLinkRows.filter((row) => row.source)
   const hasConnectedFigmaSource = connectedFigmaRows.length > 0 || Boolean(figmaSource)
-  const figmaLinkStepComplete = hasApiKey && hasConnectedFigmaSource
+  const figmaLinkStepComplete = aiReady && hasConnectedFigmaSource
   const figmaAccessStepComplete = figmaLinkStepComplete && figmaAccessConnected
   const figmaConnectionLabel =
     connectedFigmaRows.length > 1
@@ -848,7 +827,7 @@ export default function UploadStep({
         </span>
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
-        Gemini 무료 API 키와 실제 화면 이미지로 페르소나 테스트를 실행합니다.
+        Claude와 실제 화면 이미지로 페르소나 테스트를 실행합니다.
       </p>
     </div>
   )
@@ -1179,72 +1158,53 @@ export default function UploadStep({
                     </p>
                   </div>
                   <span className="rounded-full bg-white/5 px-3 py-1.5 text-xs text-gray-500">
-                    {[hasApiKey, figmaLinkStepComplete, figmaAccessStepComplete, hasFigmaFrameImages].filter(Boolean).length} / 4 완료
+                    {[aiReady, figmaLinkStepComplete, figmaAccessStepComplete, hasFigmaFrameImages].filter(Boolean).length} / 4 완료
                   </span>
                 </div>
 
                 <div className="space-y-3">
-                  <div className={`rounded-[18px] border p-5 ${hasApiKey ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : 'border-blue-500/40 bg-[#272729]'}`}>
+                  <div className={`rounded-[18px] border p-5 ${aiReady ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : 'border-blue-500/40 bg-[#272729]'}`}>
                     <div className="flex items-start gap-4">
-                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${hasApiKey ? 'bg-emerald-500 text-white' : 'bg-blue-500 text-white'}`}>
-                        {hasApiKey ? <Check className="h-4 w-4" /> : '1'}
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${aiReady ? 'bg-emerald-500 text-white' : 'bg-blue-500 text-white'}`}>
+                        {aiReady ? <Check className="h-4 w-4" /> : '1'}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-[15px] font-semibold text-gray-900">Gemini AI 연결</p>
-                        <p className="mt-1 text-xs text-gray-500">AI 페르소나 분석에 사용할 무료 Gemini API 키를 연결합니다.</p>
+                        <p className="text-[15px] font-semibold text-gray-900">Claude 연결</p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          AI 페르소나 분석에 사용할 Claude 연결을 확인합니다. 로컬 실행은 내 Claude 구독, 배포 사이트는 회사 API 키를 사용합니다.
+                        </p>
 
-                        {hasApiKey ? (
+                        {aiReady ? (
                           <div className="mt-4 flex items-center justify-between rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
                             <div>
-                              <p className="text-sm font-medium text-gray-800">Gemini 연결 완료</p>
+                              <p className="text-sm font-medium text-gray-800">
+                                {aiStatus ? `${BACKEND_LABEL[aiStatus.backend]}로 연결됨` : 'Claude 연결됨'}
+                              </p>
                               <p className="mt-1 text-xs text-gray-500">{MODEL_OPTIONS.find((option) => option.id === model)?.label ?? model}</p>
                             </div>
-                            <button type="button" onClick={onRequireApiKey} className="text-xs font-medium text-blue-500 hover:text-blue-400">API 키 변경</button>
+                            <button type="button" onClick={onOpenAiSettings} className="text-xs font-medium text-blue-500 hover:text-blue-400">연결 설정</button>
                           </div>
                         ) : (
-                          <div className="mt-4 space-y-3">
-                            <a
-                              href="https://aistudio.google.com/apikey"
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center text-xs font-medium text-blue-500 hover:text-blue-400"
-                            >
-                              Google AI Studio에서 무료 API 키 발급받기 →
-                            </a>
-                            <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_260px_auto]">
-                              <Input
-                                type="password"
-                                value={geminiKeyInput}
-                                onChange={(event) => {
-                                  setGeminiKeyInput(event.target.value)
-                                  setGeminiError(null)
-                                }}
-                                placeholder="Gemini API 키 (AIza...)"
-                                className="h-11 font-mono text-sm"
-                              />
-                              <Select value={geminiModel} onValueChange={setGeminiModel}>
-                                <SelectTrigger className="h-11 text-sm"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  {MODEL_OPTIONS.map((option) => (
-                                    <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <Button onClick={handleConnectGemini} disabled={!geminiKeyInput.trim() || geminiTesting} className="h-11 px-5 text-sm">
-                                {geminiTesting ? <><Loader2 className="h-4 w-4 animate-spin" />연결 중</> : '연결 테스트'}
-                              </Button>
-                            </div>
-                            <p className="text-[11px] leading-relaxed text-gray-500">키는 현재 브라우저에만 저장되며 PersonaFlow 서버에는 저장되지 않습니다.</p>
-                            {geminiError && <p className="text-xs text-red-600">{geminiError}</p>}
+                          <div className="mt-4 flex items-center justify-between gap-4 rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
+                            <p className="text-xs leading-relaxed text-gray-500">
+                              {!aiStatus
+                                ? 'AI 서버 상태를 확인하는 중이거나 서버에 연결하지 못했습니다.'
+                                : !aiStatus.configured
+                                  ? aiStatus.detail ?? 'Claude 연결 설정이 필요합니다.'
+                                  : '관리자에게 받은 접근 코드를 입력하세요.'}
+                            </p>
+                            <Button onClick={onOpenAiSettings} className="h-9 flex-shrink-0 px-4 text-sm">
+                              연결 설정
+                            </Button>
                           </div>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  <div className={`rounded-[18px] border p-5 ${figmaLinkStepComplete ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : hasApiKey ? 'border-blue-500/80 bg-[#272729]' : 'border-gray-200 bg-[#18181a]'}`}>
+                  <div className={`rounded-[18px] border p-5 ${figmaLinkStepComplete ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : aiReady ? 'border-blue-500/80 bg-[#272729]' : 'border-gray-200 bg-[#18181a]'}`}>
                     <div className="flex items-start gap-4">
-                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${figmaLinkStepComplete ? 'border-emerald-500 bg-emerald-500 text-white' : hasApiKey ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-300 bg-gray-100 text-gray-500'}`}>
+                      <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${figmaLinkStepComplete ? 'border-emerald-500 bg-emerald-500 text-white' : aiReady ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-300 bg-gray-100 text-gray-500'}`}>
                         {figmaLinkStepComplete ? <Check className="h-4 w-4" /> : '2'}
                       </span>
                       <div className="min-w-0 flex-1">
@@ -1262,8 +1222,8 @@ export default function UploadStep({
                           )}
                         </div>
 
-                        {!hasApiKey ? (
-                          <p className="mt-4 text-xs text-gray-500">먼저 Gemini AI 연결을 완료하세요.</p>
+                        {!aiReady ? (
+                          <p className="mt-4 text-xs text-gray-500">먼저 Claude 연결을 완료하세요.</p>
                         ) : hasConnectedFigmaSource && !editingFigmaLinks ? (
                           <div className="mt-4 rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
                             <p className="truncate text-sm font-medium text-gray-800">{figmaConnectionLabel}</p>
@@ -1330,7 +1290,7 @@ export default function UploadStep({
                         <p className="mt-1 text-xs text-gray-500">화면을 읽기 위한 개인 액세스 토큰을 연결합니다.</p>
 
                         {!figmaLinkStepComplete ? (
-                          <p className="mt-4 text-xs text-gray-500">먼저 Gemini 연결과 Figma 프레임 링크 확인을 완료하세요.</p>
+                          <p className="mt-4 text-xs text-gray-500">먼저 Claude 연결과 Figma 프레임 링크 확인을 완료하세요.</p>
                         ) : figmaAccessStepComplete ? (
                           <div className="mt-4 flex items-center justify-between rounded-[11px] border border-white/8 bg-black/15 px-4 py-3">
                             <div>
@@ -1581,7 +1541,7 @@ export default function UploadStep({
                   <p className="mt-1 text-[11px] text-gray-500">첫 테스트에 필요한 항목입니다.</p>
                 </div>
                 <span className="text-xs font-medium text-gray-500">
-                  {[sourceReady, hasApiKey].filter(Boolean).length}/2
+                  {[sourceReady, aiReady].filter(Boolean).length}/2
                 </span>
               </div>
 
@@ -1605,21 +1565,21 @@ export default function UploadStep({
                 <div className="flex items-center gap-3">
                   <span
                     className={`flex h-6 w-6 items-center justify-center rounded-full ${
-                      hasApiKey ? 'bg-emerald-500/15 text-emerald-400' : 'bg-gray-100 text-gray-400'
+                      aiReady ? 'bg-emerald-500/15 text-emerald-400' : 'bg-gray-100 text-gray-400'
                     }`}
                   >
-                    {hasApiKey ? <Check className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" />}
+                    {aiReady ? <Check className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" />}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-gray-800">Gemini API 키</p>
+                    <p className="text-xs font-medium text-gray-800">Claude 연결</p>
                     <p className="mt-0.5 text-[11px] text-gray-500">
-                      {hasApiKey ? '연결 완료' : 'AI 테스트 실행 전에 필요합니다'}
+                      {aiReady ? '연결 완료' : 'AI 테스트 실행 전에 필요합니다'}
                     </p>
                   </div>
-                  {!hasApiKey && (
+                  {!aiReady && (
                     <button
                       type="button"
-                      onClick={onRequireApiKey}
+                      onClick={onOpenAiSettings}
                       className="text-[11px] font-medium text-blue-500 hover:text-blue-400"
                     >
                       설정
